@@ -62,6 +62,7 @@ app/
 │   ├── circuit_breaker.py # Circuit breaker pattern
 │   ├── runtime.py        # Agent runtime with tool loop
 │   ├── context_builder.py # Context assembly
+│   ├── context_router.py # Topic detection and routing (Phase 6)
 │   ├── prompts.py        # System prompt building
 │   └── result_formatter.py # Response formatting
 ├── interfaces/           # Interface layer (Phase 5)
@@ -78,8 +79,14 @@ app/
 │   ├── policies.py       # Tool policies
 │   ├── validators.py     # Argument validation
 │   └── mock_tools.py     # Mock tools for development
-├── memory/               # Memory system
-│   └── __init__.py
+├── memory/               # Memory system (Phase 6)
+│   ├── __init__.py       # Package exports
+│   ├── models.py         # Memory database models
+│   ├── store.py          # Memory CRUD operations
+│   ├── thread_state.py   # Thread tracking
+│   ├── extraction_rules.py # Deterministic extraction
+│   ├── extractor_llm.py  # LLM extractor (Phase 7)
+│   └── review.py         # Memory review commands
 ├── observability/        # Monitoring and metrics
 │   └── __init__.py
 ├── scheduler/            # Job scheduling
@@ -130,7 +137,10 @@ docs/
 ├── PHASE0_DELIVERY_REPORT.md  # Phase 0 report
 ├── PHASE1_DELIVERY_REPORT.md  # Phase 1 report
 ├── PHASE2_DELIVERY_REPORT.md  # Phase 2 report
-└── PHASE3_DELIVERY_REPORT.md  # Phase 3 report (to be created)
+├── PHASE3_DELIVERY_REPORT.md  # Phase 3 report
+├── PHASE4_DELIVERY_REPORT.md  # Phase 4 report
+├── PHASE5_DELIVERY_REPORT.md  # Phase 5 report
+└── PHASE6_DELIVERY_REPORT.md  # Phase 6 report
 ```
 
 ### `/logs` - Application Logs
@@ -155,7 +165,8 @@ tests/
 ├── test_ollama_client.py # Agent system tests (Phase 3)
 ├── test_agent_runtime.py # Agent runtime tests (Phase 4)
 ├── test_tools.py        # Tool system tests (Phase 4)
-└── test_telegram.py     # Telegram interface tests (Phase 5)
+├── test_telegram.py     # Telegram interface tests (Phase 5)
+└── test_memory.py       # Memory system tests (Phase 6)
 ```
 
 ### `/.github` - GitHub Configuration
@@ -207,6 +218,20 @@ GitHub-specific configuration.
 | `app/interfaces/telegram_commands.py` | Command router for all bot commands |
 | `app/interfaces/adapters.py` | Message format conversion (Telegram <-> Internal) |
 | `app/interfaces/cli.py` | Interactive CLI interface |
+
+---
+
+## Memory System Files (Phase 6)
+
+| File | Purpose |
+|------|---------|
+| `app/memory/models.py` | Memory database models (Session, Thread, Memory, Audit) |
+| `app/memory/store.py` | MemoryStore for CRUD operations |
+| `app/memory/thread_state.py` | ThreadState for conversation tracking |
+| `app/memory/extraction_rules.py` | Deterministic extraction rules |
+| `app/memory/extractor_llm.py` | LLM-based extraction (Phase 7 placeholder) |
+| `app/memory/review.py` | MemoryReview for user-facing operations |
+| `app/agent/context_router.py` | Topic detection and thread routing |
 
 ---
 

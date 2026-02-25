@@ -4,7 +4,7 @@
 
 ## Last Updated: 2026-02-25
 
-## Current Phase: Phase 5 Complete
+## Current Phase: Phase 6 Complete
 
 ---
 
@@ -74,10 +74,22 @@
 - Full lifecycle integration in main.py
 - Comprehensive test suite
 
-### 🔄 Phase 6: Memory & Soul (NEXT)
-- Memory system integration
-- Soul/personality configuration
-- Long-term memory retrieval
+### ✅ Phase 6: Memory System - Deterministic + Review First (COMPLETE)
+- Memory database models (Session, Thread, Message, Memory, Audit)
+- MemoryStore for CRUD operations
+- ThreadState for conversation tracking
+- ContextRouter for topic detection and routing
+- MemoryExtractionRules for deterministic filtering
+- MemoryReview for user-facing operations
+- Telegram memory commands (/memory review, search, forget, edit, pause, resume, policy)
+- Memory persistence in agent runtime
+- Auto-memory extraction pipeline
+- Comprehensive test suite
+
+### 🔄 Phase 7: Enhanced Memory (NEXT)
+- LLM-based memory extraction
+- Embedding-based semantic search
+- Memory consolidation and summarization
 
 ---
 

@@ -7,6 +7,113 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.0.0] - 2026-02-25
 
+### Added - Phase 6: Memory System - Deterministic + Review First
+
+#### Memory Database Models
+- `app/memory/models.py` - Memory database models
+  - Session model (id, chat_id, created_at, updated_at, mode, metadata)
+  - Thread model (id, session_id, created_at, updated_at, summary, metadata)
+  - SessionMessage model (id, thread_id, role, content, created_at, metadata)
+  - ThreadSummary model (id, thread_id, content, created_at, version)
+  - MemoryRecord model (id, memory_type, content, tags, scope, confidence, created_at, updated_at)
+  - MemoryAudit model (id, memory_id, action, reason, created_at)
+  - EmbeddingRecord model (id, source_type, source_id, content_hash, embedding_model, vector_dim, created_at)
+  - ControlState model (id, key, value, updated_at)
+  - IdempotencyKey model (id, key, created_at, expires_at)
+  - AppEvent model (id, event_type, event_data, created_at)
+
+#### Memory Store
+- `app/memory/store.py` - Memory CRUD operations
+  - MemoryStore class with async database operations
+  - append_message() for persisting messages to threads
+  - create_thread() and get_thread() for thread management
+  - create_memory(), get_memory(), update_memory(), delete_memory() for memory CRUD
+  - list_memories() with filtering by scope, type, tags
+  - search_memories() for text-based search
+  - audit_memory() for tracking memory changes
+
+#### Thread State Management
+- `app/memory/thread_state.py` - Thread tracking
+  - ThreadState class for managing conversation threads
+  - get_current_thread() for retrieving active thread
+  - set_current_thread() for updating active thread
+  - create_new_thread() for starting new conversations
+  - get_thread_history() for retrieving past threads
+  - get_all_sessions() for listing all sessions
+  - get_session_stats() for session statistics
+
+#### Context Routing
+- `app/agent/context_router.py` - Topic detection and routing
+  - ContextRouter class for intelligent thread management
+  - should_create_new_thread() for topic change detection
+  - get_topic_similarity() for semantic similarity scoring
+  - create_new_thread_if_needed() for automatic thread creation
+  - get_thread_context() for retrieving thread context
+
+#### Context Builder Updates
+- `app/agent/context_builder.py` - Enhanced context assembly
+  - Thread context integration (recent messages)
+  - Relevant memories retrieval
+  - Scheduler/tool state snapshots
+  - Mode-specific context handling
+
+#### Deterministic Extraction
+- `app/memory/extraction_rules.py` - Deterministic filtering rules
+  - MemoryExtractionRules class for rule-based extraction
+  - classify_candidates() for filtering and categorization
+  - is_allowed_category() for category validation
+  - is_sensitive_content() for sensitive data detection
+  - get_category() for content categorization
+  - extract_facts() for fact extraction
+  - extract_preferences() for preference extraction
+
+#### LLM Extractor Placeholder
+- `app/memory/extractor_llm.py` - LLM-based extraction (Phase 7 prep)
+  - LLMMemoryExtractor class (minimal implementation)
+  - extract_memory() method (returns empty for now)
+
+#### Memory Review Commands
+- `app/memory/review.py` - Memory review operations
+  - MemoryReview class for user-facing memory operations
+  - list_memories() for reviewing stored memories
+  - search_memories() for finding specific memories
+  - get_memory(), edit_memory(), delete_memory() for CRUD
+  - pin_memory(), unpin_memory() for importance marking
+  - pause_auto_memory(), resume_auto_memory() for user control
+  - get_auto_memory_status() for checking state
+
+#### Telegram Memory Commands
+- `app/interfaces/telegram_commands.py` - Memory command handlers
+  - /memory review - List recent memories
+  - /memory search <query> - Search memories
+  - /memory forget <id> - Delete a memory
+  - /memory edit <id> <text> - Edit a memory
+  - /memory pause - Pause auto-memory
+  - /memory resume - Resume auto-memory
+  - /memory policy - Show memory policy
+
+#### Configuration
+- `app/config/settings.py` - Memory settings
+  - AUTO_MEMORY_ENABLED (default: True)
+  - AUTO_MEMORY_CONFIDENCE_THRESHOLD (default: 0.7)
+  - MAX_THREAD_MESSAGES (default: 100)
+  - THREAD_INACTIVITY_TIMEOUT_MIN (default: 30)
+
+#### Tests
+- `tests/test_memory.py` - Memory system tests
+  - MemoryStore tests (CRUD operations)
+  - ThreadState tests (thread management)
+  - ContextRouter tests (topic routing)
+  - MemoryExtractionRules tests (extraction logic)
+  - MemoryReview tests (review commands)
+  - Integration tests (full lifecycle)
+  - Edge case tests (empty, unicode, long content)
+
+### Changed
+- `app/main.py` - Added memory system initialization
+- `app/agent/runtime.py` - Added memory persistence and extraction triggers
+- `app/agent/context_builder.py` - Enhanced with thread and memory context
+
 ### Added - Phase 5: Telegram Interface + Command System
 
 #### Telegram Bot
