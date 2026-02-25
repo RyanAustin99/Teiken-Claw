@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.0.1] - Unreleased
 
+### Fixed
+
+- `.gitignore` - Force-added `app/config/` directory (was ignored by `config/` pattern)
+  - Added `app/config/__init__.py`, `app/config/constants.py`, `app/config/logging.py` to git
+  - These modules are required for application runtime
+
 ### Added - Phase 10: Skills System
 
 #### Skill System Core
