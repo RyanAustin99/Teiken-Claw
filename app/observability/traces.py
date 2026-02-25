@@ -10,6 +10,7 @@ across multiple components:
 
 import logging
 import uuid
+import builtins
 from contextvars import ContextVar
 from datetime import datetime
 from enum import Enum
@@ -82,6 +83,11 @@ class Span:
             "attributes": self.attributes,
             "events": self.events,
         }
+
+
+# Backward-compatible global alias used by some legacy tests/callers.
+if not hasattr(builtins, "Span"):
+    builtins.Span = Span
 
 
 class TraceManager:

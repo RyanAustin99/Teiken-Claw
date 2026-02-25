@@ -10,24 +10,20 @@ This module provides audit event logging for tracking system events:
 """
 
 import logging
-from datetime import datetime
+import uuid
 from enum import Enum
 from typing import Any, Dict, Optional
-import json
-import uuid
 
-from sqlalchemy import Column, Integer, String, DateTime, Text, Index, JSON
-from sqlalchemy.orm import Session
-
-from app.db.base import Base
-from app.db.session import get_db_session
 from app.config.settings import settings
+from app.db.models import AppEvent
+from app.db.session import get_db_session
 
 logger = logging.getLogger(__name__)
 
 
 class AuditEventType(str, Enum):
     """Types of audit events."""
+
     TOOL_CALL = "TOOL_CALL"
     SUBAGENT_SPAWN = "SUBAGENT_SPAWN"
     SCHEDULER_CHANGE = "SCHEDULER_CHANGE"
@@ -39,49 +35,34 @@ class AuditEventType(str, Enum):
     JOB_FAILED = "JOB_FAILED"
 
 
-class AppEvent(Base):
-    """Database model for application events (audit log)."""
-    __tablename__ = "app_events"
-    __table_args__ = (
-        {"extend_existing": True},
-    )
-    
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    event_type = Column(String(100), nullable=False, index=True)
-    event_data = Column(JSON, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    
-    # Index definitions (using column names that exist)
-    __table_args__ = (
-        Index("ix_app_events_type_created", "event_type", "created_at"),
-        Index("ix_app_events_session_created", "session_id", "created_at"),
-        {"extend_existing": True},
-    )
-
-
 class AuditLogger:
     """
     Audit logger for tracking system events.
-    
-    Provides structured logging of important system events to the database
-    for auditing and debugging purposes.
+
+    Persists structured audit records where possible. If a compatible
+    synchronous session context is not available, logging degrades safely.
     """
-    
+
     def __init__(self, enabled: bool = True):
-        """
-        Initialize the audit logger.
-        
-        Args:
-            enabled: Whether audit logging is enabled
-        """
         self._enabled = enabled and settings.AUDIT_ENABLED
         logger.info(f"AuditLogger initialized (enabled={self._enabled})")
-    
+
     @property
     def is_enabled(self) -> bool:
-        """Check if audit logging is enabled."""
         return self._enabled
-    
+
+    def _with_session(self):
+        """Return a sync context manager session if available, else None."""
+        try:
+            session_ctx = get_db_session()
+        except Exception:
+            return None
+
+        # Sync context manager expected by this module.
+        if hasattr(session_ctx, "__enter__") and hasattr(session_ctx, "__exit__"):
+            return session_ctx
+        return None
+
     def log_event(
         self,
         event_type: AuditEventType,
@@ -92,65 +73,39 @@ class AuditLogger:
         component: Optional[str] = None,
         trace_id: Optional[str] = None,
     ) -> Optional[str]:
-        """
-        Log an audit event.
-        
-        Args:
-            event_type: Type of the event
-            details: Additional event details
-            session_id: Associated session ID
-            thread_id: Associated thread ID
-            user_id: Associated user ID
-            component: Component that generated the event
-            trace_id: Distributed trace ID
-            
-        Returns:
-            Event ID if logged, None if disabled
-        """
         if not self._enabled:
             return None
-        
+
+        event_id = str(uuid.uuid4())
+
+        event_data = {
+            "event_id": event_id,
+            "details": details or {},
+            "session_id": session_id,
+            "thread_id": thread_id,
+            "user_id": user_id,
+            "component": component,
+            "trace_id": trace_id,
+        }
+
+        session_ctx = self._with_session()
+        if not session_ctx:
+            logger.debug("Audit session context unavailable; event not persisted")
+            return None
+
         try:
-            event_id = str(uuid.uuid4())
-            
-            # Serialize details to JSON
-            details_json = None
-            if details:
-                details_json = json.dumps(details, default=str)
-            
-            # Create event record
             event = AppEvent(
                 event_type=event_type.value,
-                event_id=event_id,
-                timestamp=datetime.utcnow(),
-                details=details_json,
-                session_id=session_id,
-                thread_id=thread_id,
-                user_id=user_id,
-                component=component,
-                trace_id=trace_id,
+                event_data=event_data,
             )
-            
-            # Save to database
-            with get_db_session() as db:
+            with session_ctx as db:
                 db.add(event)
                 db.commit()
-            
-            logger.debug(
-                f"Audit event logged: {event_type.value}",
-                extra={
-                    "event_type": event_type.value,
-                    "event_id": event_id,
-                    "component": component,
-                }
-            )
-            
             return event_id
-            
-        except Exception as e:
-            logger.error(f"Failed to log audit event: {e}", exc_info=True)
+        except Exception as exc:
+            logger.error(f"Failed to log audit event: {exc}", exc_info=True)
             return None
-    
+
     def log_tool_call(
         self,
         tool_name: str,
@@ -161,7 +116,6 @@ class AuditLogger:
         thread_id: Optional[int] = None,
         trace_id: Optional[str] = None,
     ) -> Optional[str]:
-        """Log a tool call event."""
         return self.log_event(
             event_type=AuditEventType.TOOL_CALL,
             details={
@@ -175,7 +129,7 @@ class AuditLogger:
             component="tools",
             trace_id=trace_id,
         )
-    
+
     def log_subagent_spawn(
         self,
         subagent_type: str,
@@ -183,18 +137,15 @@ class AuditLogger:
         thread_id: Optional[int] = None,
         trace_id: Optional[str] = None,
     ) -> Optional[str]:
-        """Log a sub-agent spawn event."""
         return self.log_event(
             event_type=AuditEventType.SUBAGENT_SPAWN,
-            details={
-                "subagent_type": subagent_type,
-            },
+            details={"subagent_type": subagent_type},
             session_id=session_id,
             thread_id=thread_id,
             component="subagents",
             trace_id=trace_id,
         )
-    
+
     def log_scheduler_change(
         self,
         action: str,
@@ -202,20 +153,18 @@ class AuditLogger:
         details: Optional[Dict[str, Any]] = None,
         trace_id: Optional[str] = None,
     ) -> Optional[str]:
-        """Log a scheduler change event."""
-        event_details = {"action": action}
+        payload = {"action": action}
         if job_id:
-            event_details["job_id"] = job_id
+            payload["job_id"] = job_id
         if details:
-            event_details.update(details)
-        
+            payload.update(details)
         return self.log_event(
             event_type=AuditEventType.SCHEDULER_CHANGE,
-            details=event_details,
+            details=payload,
             component="scheduler",
             trace_id=trace_id,
         )
-    
+
     def log_memory_write(
         self,
         memory_id: int,
@@ -223,18 +172,14 @@ class AuditLogger:
         session_id: Optional[int] = None,
         trace_id: Optional[str] = None,
     ) -> Optional[str]:
-        """Log a memory write event."""
         return self.log_event(
             event_type=AuditEventType.MEMORY_WRITE,
-            details={
-                "memory_id": memory_id,
-                "memory_type": memory_type,
-            },
+            details={"memory_id": memory_id, "memory_type": memory_type},
             session_id=session_id,
             component="memory",
             trace_id=trace_id,
         )
-    
+
     def log_memory_delete(
         self,
         memory_id: int,
@@ -242,86 +187,66 @@ class AuditLogger:
         session_id: Optional[int] = None,
         trace_id: Optional[str] = None,
     ) -> Optional[str]:
-        """Log a memory delete event."""
         return self.log_event(
             event_type=AuditEventType.MEMORY_DELETE,
-            details={
-                "memory_id": memory_id,
-                "reason": reason,
-            },
+            details={"memory_id": memory_id, "reason": reason},
             session_id=session_id,
             component="memory",
             trace_id=trace_id,
         )
-    
+
     def log_pause_mode_change(
         self,
         paused: bool,
         reason: Optional[str] = None,
         user_id: Optional[str] = None,
     ) -> Optional[str]:
-        """Log a pause mode change event."""
         return self.log_event(
             event_type=AuditEventType.PAUSE_MODE_CHANGE,
-            details={
-                "paused": paused,
-                "reason": reason,
-            },
+            details={"paused": paused, "reason": reason},
             user_id=user_id,
             component="control",
         )
-    
+
     def log_job_queued(
         self,
         job_id: str,
         job_type: str,
         trace_id: Optional[str] = None,
     ) -> Optional[str]:
-        """Log a job queued event."""
         return self.log_event(
             event_type=AuditEventType.JOB_QUEUED,
-            details={
-                "job_id": job_id,
-                "job_type": job_type,
-            },
+            details={"job_id": job_id, "job_type": job_type},
             component="queue",
             trace_id=trace_id,
         )
-    
+
     def log_job_completed(
         self,
         job_id: str,
         duration_ms: float,
         trace_id: Optional[str] = None,
     ) -> Optional[str]:
-        """Log a job completed event."""
         return self.log_event(
             event_type=AuditEventType.JOB_COMPLETED,
-            details={
-                "job_id": job_id,
-                "duration_ms": duration_ms,
-            },
+            details={"job_id": job_id, "duration_ms": duration_ms},
             component="queue",
             trace_id=trace_id,
         )
-    
+
     def log_job_failed(
         self,
         job_id: str,
         error: str,
         trace_id: Optional[str] = None,
     ) -> Optional[str]:
-        """Log a job failed event."""
         return self.log_event(
             event_type=AuditEventType.JOB_FAILED,
-            details={
-                "job_id": job_id,
-                "error": error,
-            },
+            details={"job_id": job_id, "error": error},
             component="queue",
             trace_id=trace_id,
         )
-    
+
     def get_events(
         self,
         event_type: Optional[AuditEventType] = None,
@@ -329,60 +254,53 @@ class AuditLogger:
         limit: int = 100,
         offset: int = 0,
     ) -> list[Dict[str, Any]]:
-        """
-        Query audit events.
-        
-        Args:
-            event_type: Filter by event type
-            session_id: Filter by session ID
-            limit: Maximum number of events to return
-            offset: Number of events to skip
-            
-        Returns:
-            List of event dictionaries
-        """
-        with get_db_session() as db:
+        session_ctx = self._with_session()
+        if not session_ctx:
+            return []
+
+        with session_ctx as db:
             query = db.query(AppEvent)
-            
+
             if event_type:
                 query = query.filter(AppEvent.event_type == event_type.value)
-            if session_id:
-                query = query.filter(AppEvent.session_id == session_id)
-            
-            events = query.order_by(AppEvent.timestamp.desc()).offset(offset).limit(limit).all()
-            
-            return [
+
+            if session_id is not None:
+                query = query.filter(AppEvent.event_data["session_id"].as_integer() == session_id)
+
+            events = query.order_by(AppEvent.created_at.desc()).offset(offset).limit(limit).all()
+
+        records: list[Dict[str, Any]] = []
+        for e in events:
+            data = e.event_data or {}
+            records.append(
                 {
-                    "event_id": e.event_id,
+                    "event_id": data.get("event_id"),
                     "event_type": e.event_type,
-                    "timestamp": e.timestamp.isoformat() if e.timestamp else None,
-                    "details": json.loads(e.details) if e.details else None,
-                    "session_id": e.session_id,
-                    "thread_id": e.thread_id,
-                    "user_id": e.user_id,
-                    "component": e.component,
-                    "trace_id": e.trace_id,
+                    "timestamp": e.created_at.isoformat() if e.created_at else None,
+                    "details": data.get("details"),
+                    "session_id": data.get("session_id"),
+                    "thread_id": data.get("thread_id"),
+                    "user_id": data.get("user_id"),
+                    "component": data.get("component"),
+                    "trace_id": data.get("trace_id"),
                 }
-                for e in events
-            ]
+            )
+        return records
 
 
-# Global audit logger instance
 _audit_logger: Optional[AuditLogger] = None
 
 
 def get_audit_logger() -> AuditLogger:
-    """Get the global audit logger instance."""
     global _audit_logger
     if _audit_logger is None:
         _audit_logger = AuditLogger()
     return _audit_logger
 
 
-def set_audit_logger(logger: AuditLogger) -> None:
-    """Set the global audit logger instance."""
+def set_audit_logger(logger_instance: AuditLogger) -> None:
     global _audit_logger
-    _audit_logger = logger
+    _audit_logger = logger_instance
 
 
 __all__ = [
