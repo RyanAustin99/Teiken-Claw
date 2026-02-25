@@ -16,7 +16,7 @@ Key Features:
 
 import logging
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Union
 from enum import Enum
 from pathlib import Path
 import json
@@ -27,6 +27,15 @@ logger = logging.getLogger(__name__)
 
 # Global control state manager instance
 _control_state_manager: Optional["ControlStateManager"] = None
+
+
+def get_db_connection():
+    """
+    Backward-compatible placeholder hook for legacy tests/callers.
+
+    Control state is file-backed in current implementation.
+    """
+    return None
 
 
 def get_control_state_manager() -> Optional["ControlStateManager"]:
@@ -115,6 +124,7 @@ class ControlStateManager:
         self,
         persistence_path: Optional[str] = None,
         initial_state: ControlState = ControlState.NORMAL,
+        load_persisted_state: bool = False,
     ):
         """
         Initialize the control state manager.
@@ -122,6 +132,7 @@ class ControlStateManager:
         Args:
             persistence_path: Path to state persistence file
             initial_state: Initial state if no persisted state exists
+            load_persisted_state: Whether to load persisted state on startup
         """
         self._state = initial_state
         self._previous_state: Optional[ControlState] = None
@@ -136,8 +147,9 @@ class ControlStateManager:
         
         self.persistence_path = persistence_path
         
-        # Load persisted state
-        self._load_state()
+        # Load persisted state if requested by caller.
+        if load_persisted_state:
+            self._load_state()
         
         logger.info(
             f"ControlStateManager initialized (state: {self._state.value})",
@@ -160,7 +172,7 @@ class ControlStateManager:
         self,
         state: Union[ControlState, str],
         changed_by: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    ) -> Union[Dict[str, Any], bool]:
         """
         Set the control state.
         
@@ -173,7 +185,11 @@ class ControlStateManager:
         """
         # Normalize state
         if isinstance(state, str):
-            state = ControlState.from_string(state)
+            try:
+                state = ControlState.from_string(state)
+            except ValueError:
+                logger.warning(f"Invalid control state requested: {state}")
+                return False
         
         old_state = self._state
         
@@ -211,6 +227,12 @@ class ControlStateManager:
             "changed_at": self._state_changed_at.isoformat() if self._state_changed_at else None,
             "changed_by": changed_by,
         }
+
+    def get_pause_reason(self) -> Optional[str]:
+        """Backward-compatible reason accessor for admin/status surfaces."""
+        if self.is_normal():
+            return None
+        return self._state_changed_by
     
     def is_jobs_paused(self) -> bool:
         """
@@ -395,10 +417,6 @@ class ControlStateManager:
                 extra={"event": "control_state_save_error"},
                 exc_info=True,
             )
-
-
-# Type hint for Union
-from typing import Union
 
 
 # Export

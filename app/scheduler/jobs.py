@@ -16,6 +16,7 @@ Key Features:
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 from enum import Enum
+from uuid import uuid4
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -30,6 +31,9 @@ class JobStatus(str, Enum):
     """Status of a scheduled job."""
     PENDING = "pending"
     RUNNING = "running"
+    SUCCESS = "success"
+    FAILURE = "failure"
+    SKIPPED = "skipped"
     PAUSED = "paused"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -223,7 +227,10 @@ class JobRunResult(BaseModel):
         metadata: Additional metadata
     """
     job_id: str = Field(..., description="Job identifier")
-    run_id: str = Field(..., description="Unique run identifier")
+    run_id: str = Field(
+        default_factory=lambda: f"run_{uuid4().hex[:12]}",
+        description="Unique run identifier"
+    )
     status: JobStatus = Field(..., description="Run status")
     started_at: datetime = Field(..., description="Start timestamp")
     completed_at: Optional[datetime] = Field(default=None, description="Completion timestamp")
@@ -247,7 +254,7 @@ class JobRunResult(BaseModel):
     
     def mark_success(self, result: Optional[str] = None) -> None:
         """Mark the run as successful."""
-        self.status = JobStatus.COMPLETED
+        self.status = JobStatus.SUCCESS
         self.completed_at = datetime.utcnow()
         self.result = result
         if self.started_at:
@@ -257,7 +264,7 @@ class JobRunResult(BaseModel):
     
     def mark_failure(self, error_message: str, error_type: Optional[str] = None) -> None:
         """Mark the run as failed."""
-        self.status = JobStatus.FAILED
+        self.status = JobStatus.FAILURE
         self.completed_at = datetime.utcnow()
         self.error_message = error_message
         self.error_type = error_type or "ExecutionError"
@@ -268,7 +275,7 @@ class JobRunResult(BaseModel):
     
     def mark_skipped(self, reason: str) -> None:
         """Mark the run as skipped."""
-        self.status = JobStatus.CANCELLED
+        self.status = JobStatus.SKIPPED
         self.completed_at = datetime.utcnow()
         self.error_message = reason
         self.error_type = "Skipped"

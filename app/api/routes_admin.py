@@ -54,7 +54,7 @@ async def pause_system(reason: Optional[str] = None) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail="Control state manager not initialized")
     
     try:
-        _control_state_manager.pause(reason or "Manual pause via admin API")
+        _control_state_manager.pause_all(changed_by=reason or "Manual pause via admin API")
         return {
             "success": True,
             "state": "paused",
@@ -79,7 +79,7 @@ async def resume_system(reason: Optional[str] = None) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail="Control state manager not initialized")
     
     try:
-        _control_state_manager.resume(reason or "Manual resume via admin API")
+        _control_state_manager.resume(changed_by=reason or "Manual resume via admin API")
         return {
             "success": True,
             "state": "running",

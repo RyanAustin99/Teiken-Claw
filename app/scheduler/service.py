@@ -17,7 +17,7 @@ Key Features:
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Callable, Awaitable
+from typing import Optional, List, Dict, Any, Callable, Awaitable, Union
 from uuid import uuid4
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -95,6 +95,8 @@ class SchedulerService:
         max_instances: int = 3,
         job_defaults: Optional[Dict[str, Any]] = None,
         executor_callback: Optional[Callable[[str, Dict[str, Any]], Awaitable[JobRunResult]]] = None,
+        executor: Optional[Any] = None,
+        persistence: Optional[Any] = None,
     ):
         """
         Initialize the scheduler service.
@@ -104,6 +106,8 @@ class SchedulerService:
             max_instances: Maximum concurrent job instances
             job_defaults: Default job configuration
             executor_callback: Async callback for job execution
+            executor: Legacy scheduler executor object/callback
+            persistence: Legacy scheduler persistence object
         """
         # Database path for job persistence
         if scheduler_db_path is None:
@@ -113,7 +117,20 @@ class SchedulerService:
         
         self.scheduler_db_path = scheduler_db_path
         self.max_instances = max_instances
-        self.executor_callback = executor_callback
+        self.executor = executor
+        self.persistence = persistence
+
+        if executor_callback is not None:
+            self.executor_callback = executor_callback
+        elif executor is not None and hasattr(executor, "execute_job"):
+            async def _executor_callback(job_id: str, action: Dict[str, Any]) -> JobRunResult:
+                return await executor.execute_job(job_id, action)
+
+            self.executor_callback = _executor_callback
+        elif callable(executor):
+            self.executor_callback = executor
+        else:
+            self.executor_callback = None
         
         # Default job configuration
         self.job_defaults = job_defaults or {
@@ -535,9 +552,13 @@ class SchedulerService:
             ),
         )
     
-    @property
     def is_running(self) -> bool:
         """Check if scheduler is running."""
+        return self._is_running
+
+    @property
+    def running(self) -> bool:
+        """Property alias for scheduler run state."""
         return self._is_running
     
     @property

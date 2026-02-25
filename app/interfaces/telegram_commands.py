@@ -623,7 +623,7 @@ class CommandRouter:
         control_state = get_control_state_manager()
         
         # Check if scheduler is available
-        if not scheduler or not scheduler.is_running:
+        if not scheduler or not scheduler.is_running():
             return (
                 "📅 *Scheduled Jobs*\n\n"
                 "⚠️ Scheduler is not running\\. "
@@ -1186,7 +1186,7 @@ class CommandRouter:
         
         # Scheduler stats
         scheduler = get_scheduler_service()
-        if scheduler and scheduler.is_running:
+        if scheduler and scheduler.is_running():
             scheduler_stats = scheduler.get_stats()
             stats_lines.append("\n📅 *Scheduler:*")
             stats_lines.append(f"  Total Jobs: {scheduler_stats.total_jobs}")

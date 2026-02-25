@@ -39,6 +39,15 @@ logger = logging.getLogger(__name__)
 _scheduler_persistence: Optional["SchedulerPersistence"] = None
 
 
+def get_db_connection():
+    """
+    Backward-compatible placeholder for legacy sync persistence hooks.
+
+    Current scheduler persistence uses async SQLAlchemy sessions.
+    """
+    return None
+
+
 def get_scheduler_persistence() -> Optional["SchedulerPersistence"]:
     """Get the global scheduler persistence instance."""
     return _scheduler_persistence

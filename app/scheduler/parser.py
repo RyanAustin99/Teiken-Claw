@@ -343,8 +343,8 @@ class ScheduleParser:
         try:
             self.parse_trigger(trigger_type, config)
             return True
-        except Exception as e:
-            raise ScheduleParseError(f"Invalid trigger config: {e}")
+        except Exception:
+            return False
     
     def _parse_datetime_string(self, datetime_str: str) -> datetime:
         """
