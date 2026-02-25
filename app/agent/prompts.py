@@ -28,7 +28,7 @@ Guidelines:
 Current mode: {mode}
 """
 
-# Mode-specific prompts
+# Mode-specific prompts (kept for backward compatibility)
 MODE_PROMPTS = {
     "default": """You are in standard mode. Provide helpful, balanced responses.""",
     
@@ -71,6 +71,53 @@ def build_system_prompt(
         soul_prompt = _build_soul_prompt(soul_config)
         if soul_prompt:
             parts.append("\n" + soul_prompt)
+    
+    return "\n".join(parts)
+
+
+def build_system_prompt_from_soul(
+    mode: str = "default",
+    core: Optional[str] = None,
+    style: Optional[str] = None,
+    goals: Optional[str] = None,
+    mode_config: Optional[Dict[str, Any]] = None,
+) -> str:
+    """
+    Build system prompt from soul configuration components.
+    
+    Args:
+        mode: Current mode name
+        core: Core identity text
+        style: Style guide text
+        goals: Goals text
+        mode_config: Mode-specific configuration
+        
+    Returns:
+        Complete system prompt string
+    """
+    parts = []
+    
+    # Core identity
+    if core:
+        parts.append(core)
+    else:
+        parts.append(DEFAULT_SYSTEM_PROMPT.format(mode=mode))
+    
+    # Style guide
+    if style:
+        parts.append("\n## Style Guide\n" + style)
+    
+    # Goals
+    if goals:
+        parts.append("\n## Goals\n" + goals)
+    
+    # Mode-specific configuration
+    if mode_config:
+        mode_prompt = mode_config.get("prompt_template")
+        if mode_prompt:
+            parts.append("\n" + mode_prompt)
+    elif mode in MODE_PROMPTS:
+        parts.append("\n" + MODE_PROMPTS[mode])
     
     return "\n".join(parts)
 
@@ -232,6 +279,7 @@ __all__ = [
     "DEFAULT_SYSTEM_PROMPT",
     "MODE_PROMPTS",
     "build_system_prompt",
+    "build_system_prompt_from_soul",
     "build_tool_prompt",
     "build_context_prompt",
     "format_message_for_prompt",

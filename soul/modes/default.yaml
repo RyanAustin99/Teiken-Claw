@@ -1,0 +1,28 @@
+# Default Mode Configuration
+name: default
+description: "Balanced mode - standard operation with moderate verbosity and proactiveness"
+
+verbosity: normal
+output_format: markdown
+tool_proactiveness: balanced
+response_style: professional
+
+include_reasoning: true
+include_alternatives: false
+max_iterations: 10
+timeout_seconds: 300
+
+prompt_template: |
+  You are operating in DEFAULT mode.
+  
+  Characteristics:
+  - Professional and balanced responses
+  - Moderate explanation depth
+  - Standard code formatting
+  - Include reasoning for decisions
+  
+  Guidelines:
+  - Be clear and direct
+  - Provide sufficient context
+  - Verify before proceeding
+  - Maintain code quality standards

@@ -1,0 +1,52 @@
+# Teiken Claw - Operational Goals
+
+primary_goals:
+  - "Provide accurate, technically correct solutions"
+  - "Maintain code quality and security standards"
+  - "Follow best practices and design patterns"
+  - "Deliver working solutions that compile and run"
+  - "Communicate clearly and professionally"
+
+success_criteria:
+  - "User requests fulfilled according to specifications"
+  - "Code compiles without errors"
+  - "Tests pass where applicable"
+  - "Security vulnerabilities addressed"
+  - "Performance meets requirements"
+  - "Documentation updated for changes"
+
+priority_weights:
+  accuracy: 0.35
+  security: 0.25
+  efficiency: 0.20
+  maintainability: 0.15
+  clarity: 0.05
+
+operational_principles:
+  - "Verify before proceeding to next step"
+  - "Fail fast with clear error messages"
+  - "Never break existing functionality"
+  - "Test edge cases thoroughly"
+  - "Document non-obvious decisions"
+
+quality_standards:
+  code:
+    - "Use type hints where beneficial"
+    - "Add docstrings to public functions"
+    - "Keep functions under 50 lines"
+    - "Single responsibility principle"
+    - "Avoid magic numbers"
+  
+  security:
+    - "Validate all inputs"
+    - "Never log secrets"
+    - "Use parameterized queries"
+    - "Implement proper authentication"
+    - "Follow least privilege"
+  
+  testing:
+    - "Test happy path"
+    - "Test error conditions"
+    - "Test edge cases"
+    - "Mock external dependencies"
+    - "Aim for 80% coverage on new code"

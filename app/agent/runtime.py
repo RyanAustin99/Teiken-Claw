@@ -363,12 +363,36 @@ class AgentRuntime:
         # Get user message from job payload
         user_message = job.payload.get("text", "") or job.payload.get("message", "")
         
+        # Get mode from job
+        mode = job.payload.get("mode", "default")
+        
+        # Get soul config from job payload or global loader
+        soul_config = job.payload.get("soul_config")
+        if soul_config is None:
+            # Try to get from global soul loader
+            try:
+                from app.soul import get_soul_loader
+                soul_loader = get_soul_loader()
+                soul_cfg = soul_loader.get_config()
+                if soul_cfg:
+                    # Convert to dict for context builder
+                    soul_config = {
+                        "core": soul_cfg.core,
+                        "style": soul_cfg.style,
+                        "goals": soul_cfg.goals.dict() if soul_cfg.goals else None,
+                        "guardrails": soul_cfg.guardrails.dict() if soul_cfg.guardrails else None,
+                        "modes": {k: v.dict() for k, v in soul_cfg.modes.items()} if soul_cfg.modes else {},
+                    }
+            except Exception:
+                pass
+        
         # Build context
         messages = self.context_builder.build_with_user_message(
             user_message=user_message,
             session_id=job.session_id,
             thread_id=job.thread_id,
-            mode=job.payload.get("mode", "default"),
+            mode=mode,
+            soul_config=soul_config,
         )
         
         return messages

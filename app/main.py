@@ -101,6 +101,19 @@ from app.skills import (
     set_skill_router,
 )
 
+# Phase 12: Soul imports
+from app.soul import (
+    SoulLoader,
+    SoulPolicyManager,
+    SoulConfig,
+    ModeConfig,
+    ModeType,
+    get_soul_loader,
+    load_soul,
+    get_policy_manager,
+    init_policy_manager,
+)
+
 # Phase 11: Sub-agent imports
 from app.subagents.manager import SubAgentManager, get_subagent_manager, set_subagent_manager
 from app.subagents.executor import SubAgentExecutor, get_subagent_executor, set_subagent_executor
@@ -156,6 +169,10 @@ _skill_router: SkillRouter = None
 _subagent_manager: SubAgentManager = None
 _subagent_executor: SubAgentExecutor = None
 _subagent_summarizer: SubAgentSummarizer = None
+
+# Phase 12: Global soul components
+_soul_config: SoulConfig = None
+_soul_policy_manager: SoulPolicyManager = None
 
 
 async def _initialize_queue_system() -> dict:
@@ -417,6 +434,19 @@ async def _initialize_queue_system() -> dict:
         _subagent_summarizer = get_subagent_summarizer()
         set_subagent_summarizer(_subagent_summarizer)
         status["subagent_summarizer"] = "initialized"
+        
+        # 27. Initialize Soul Loader (Phase 12)
+        logger.info("Initializing soul loader...")
+        global _soul_config
+        _soul_config = load_soul()
+        status["soul_config"] = "initialized"
+        status["soul_version"] = _soul_config.version
+        
+        # 28. Initialize Soul Policy Manager (Phase 12)
+        logger.info("Initializing soul policy manager...")
+        global _soul_policy_manager
+        _soul_policy_manager = init_policy_manager(_soul_config)
+        status["soul_policy_manager"] = "initialized"
         
         # 13. Initialize Command Router
         logger.info("Initializing command router...")

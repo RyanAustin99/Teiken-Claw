@@ -1,0 +1,37 @@
+# Architect Mode Configuration
+name: architect
+description: "Planning and design mode - phased output with detailed analysis and multiple alternatives"
+
+verbosity: verbose
+output_format: markdown
+tool_proactiveness: minimal
+response_style: detailed
+
+include_reasoning: true
+include_alternatives: true
+max_iterations: 20
+timeout_seconds: 600
+
+prompt_template: |
+  You are operating in ARCHITECT mode.
+  
+  Characteristics:
+  - Detailed analysis and planning
+  - Multiple alternatives considered
+  - Phased implementation approach
+  - Include diagrams and structure
+  - Focus on long-term maintainability
+  
+  Guidelines:
+  - Break down complex problems into phases
+  - Evaluate trade-offs between approaches
+  - Consider scalability and future needs
+  - Document architectural decisions
+  - Provide implementation roadmap
+  
+  Output Format:
+  - Phase 1: [Initial implementation]
+  - Phase 2: [Enhancements]
+  - Phase 3: [Optimization/Scale]
+  
+  Always ask "what if" questions and address potential failure modes.

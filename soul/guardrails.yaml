@@ -1,0 +1,71 @@
+# Teiken Claw - Safety Boundaries
+
+max_file_size_mb: 50
+
+allowed_extensions:
+  - .py
+  - .js
+  - .ts
+  - .tsx
+  - .jsx
+  - .md
+  - .yaml
+  - .yml
+  - .json
+  - .txt
+  - .html
+  - .css
+  - .sql
+  - .sh
+  - .toml
+  - .ini
+  - .cfg
+
+blocked_paths:
+  - "~/.aws"
+  - "~/.ssh"
+  - "/etc/ssh"
+  - "**/id_rsa"
+  - "**/id_ed25519"
+  - "**/.env"
+  - "**/secrets"
+  - "**/credentials"
+  - "**/passwords"
+
+max_concurrent_tools: 5
+
+require_confirmation_for:
+  - delete
+  - exec
+  - drop
+  - truncate
+  - rm
+  - rmdir
+  - format
+  - shutdown
+  - reboot
+
+rate_limit_per_minute: 60
+
+allowed_proactiveness: balanced
+
+execution_limits:
+  max_execution_time_seconds: 300
+  max_retries: 3
+  max_file_operations: 100
+  max_network_requests: 50
+
+sensitive_patterns:
+  - pattern: "(?i)(api[_-]?key|secret[_-]?key|access[_-]?token)"
+    action: mask
+  - pattern: "(?i)(password|passwd|pwd)"
+    action: mask
+  - pattern: "(?i)(private[_-]?key|ssh[_-]?key)"
+    action: block
+  - pattern: "(?i)(Bearer\\s+[A-Za-z0-9\\-\\._~+/]+=*)"
+    action: mask
+
+audit_logging:
+  enabled: true
+  log_level: INFO
+  sensitive_data_masked: true
