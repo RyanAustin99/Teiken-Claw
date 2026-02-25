@@ -54,14 +54,30 @@ app/
 │   ├── locks.py          # Per-chat/session locks
 │   ├── throttles.py      # Rate limiting & outbound queue
 │   └── dead_letter.py    # Dead-letter queue management
-├── agent/                # Core agent logic (Phase 3)
+├── agent/                # Core agent logic (Phase 3-4)
 │   ├── __init__.py       # Package exports
 │   ├── ollama_client.py  # Ollama HTTP client
 │   ├── errors.py         # Custom error classes
 │   ├── retries.py        # Retry logic and policies
-│   └── circuit_breaker.py # Circuit breaker pattern
-├── interfaces/           # Interface adapters
-│   └── __init__.py
+│   ├── circuit_breaker.py # Circuit breaker pattern
+│   ├── runtime.py        # Agent runtime with tool loop
+│   ├── context_builder.py # Context assembly
+│   ├── prompts.py        # System prompt building
+│   └── result_formatter.py # Response formatting
+├── interfaces/           # Interface layer (Phase 5)
+│   ├── __init__.py       # Package exports
+│   ├── telegram_bot.py   # Telegram bot implementation
+│   ├── telegram_sender.py # Telegram message sender
+│   ├── telegram_commands.py # Command router
+│   ├── adapters.py       # Message format conversion
+│   └── cli.py            # CLI interface
+├── tools/                # Tool system (Phase 4)
+│   ├── __init__.py       # Package exports
+│   ├── base.py           # Tool base class
+│   ├── registry.py       # Tool registry
+│   ├── policies.py       # Tool policies
+│   ├── validators.py     # Argument validation
+│   └── mock_tools.py     # Mock tools for development
 ├── memory/               # Memory system
 │   └── __init__.py
 ├── observability/        # Monitoring and metrics
@@ -72,9 +88,7 @@ app/
 │   └── __init__.py
 ├── soul/                 # Agent personality
 │   └── __init__.py
-├── subagents/            # Subagent management
-│   └── __init__.py
-└── tools/                # Tool implementations
+└── subagents/            # Subagent management
     └── __init__.py
 ```
 
@@ -138,7 +152,10 @@ tests/
 ├── __init__.py
 ├── test_app.py          # Basic app tests
 ├── test_queue.py        # Queue system tests (Phase 2)
-└── test_ollama_client.py # Agent system tests (Phase 3)
+├── test_ollama_client.py # Agent system tests (Phase 3)
+├── test_agent_runtime.py # Agent runtime tests (Phase 4)
+├── test_tools.py        # Tool system tests (Phase 4)
+└── test_telegram.py     # Telegram interface tests (Phase 5)
 ```
 
 ### `/.github` - GitHub Configuration
@@ -178,6 +195,18 @@ GitHub-specific configuration.
 | `app/agent/errors.py` | Custom error classes for agent operations |
 | `app/agent/retries.py` | Retry logic with exponential backoff |
 | `app/agent/circuit_breaker.py` | Circuit breaker pattern for fault tolerance |
+
+---
+
+## Interface System Files (Phase 5)
+
+| File | Purpose |
+|------|---------|
+| `app/interfaces/telegram_bot.py` | Telegram bot with polling and command handlers |
+| `app/interfaces/telegram_sender.py` | Message sender with retry and rate limiting |
+| `app/interfaces/telegram_commands.py` | Command router for all bot commands |
+| `app/interfaces/adapters.py` | Message format conversion (Telegram <-> Internal) |
+| `app/interfaces/cli.py` | Interactive CLI interface |
 
 ---
 

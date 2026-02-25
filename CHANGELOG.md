@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.0.0] - 2026-02-25
 
+### Added - Phase 5: Telegram Interface + Command System
+
+#### Telegram Bot
+- `app/interfaces/telegram_bot.py` - Telegram bot implementation
+  - TelegramBot class using python-telegram-bot (async)
+  - start() method for polling mode
+  - stop() method for graceful shutdown
+  - Message handler that extracts chat_id, user_id, message text
+  - Creates Job and enqueues to dispatcher
+  - Shows typing indicator while processing
+  - Error handler for Telegram API errors
+  - Support for ENABLE_TELEGRAM flag to disable
+  - All command handlers registered (/start, /help, /ping, /status, etc.)
+
+#### Telegram Sender
+- `app/interfaces/telegram_sender.py` - Telegram message sender
+  - TelegramSender class for sending messages
+  - send_message(chat_id, text, parse_mode) method
+  - send_chunked_message() for long messages (>4096 chars)
+  - Retry on 429 (rate limit) with retry-after respect
+  - Retry on network errors with exponential backoff
+  - Integration with OutboundQueue
+  - Sender loop that pulls from outbound queue
+
+#### Command Router
+- `app/interfaces/telegram_commands.py` - Command handlers
+  - CommandRouter class for all command processing
+  - Core Commands: /start, /help, /ping, /status
+  - Mode Commands: /mode, /mode <name>
+  - Thread Commands: /thread, /thread new, /thread summary
+  - Memory Commands (stubs): /memory review, /memory search, /memory pause, /memory resume
+  - Scheduler Commands (stubs): /jobs, /pause jobs, /pause all, /resume
+  - Admin Commands: /admin stats, /admin trace <job_id>
+  - Admin permission checking
+
+#### Interface Adapters
+- `app/interfaces/adapters.py` - Message format conversion
+  - TelegramAdapter class for message conversion
+  - message_to_job() for Telegram to Job conversion
+  - response_to_telegram() for internal to Telegram format
+  - MarkdownV2 escaping utilities
+  - HTML escaping utilities
+  - Message formatting helpers (bold, italic, code, links)
+  - Message validation and chunking
+
+#### CLI Interface
+- `app/interfaces/cli.py` - Interactive CLI
+  - CLIInterface class for interactive REPL
+  - Support for ENABLE_CLI flag
+  - Command processing (/help, /exit, /status, /mode, /clear, /history)
+  - Job creation and enqueueing
+  - Response handling
+
+#### Integration
+- Updated `app/main.py` with Telegram bot lifecycle
+  - Initialize TelegramBot on startup (if enabled)
+  - Initialize TelegramSender on startup
+  - Start bot polling on startup
+  - Start sender loop on startup
+  - Stop bot on shutdown
+  - Stop sender on shutdown
+- Updated `app/interfaces/__init__.py` with all exports
+- Updated `requirements.txt` with aiolimiter dependency
+
+#### Tests
+- `tests/test_telegram.py` - Telegram interface tests
+  - TelegramAdapter tests (escaping, conversion, formatting)
+  - CommandRouter tests (all commands, permissions)
+  - TelegramSender tests (chunking, retry logic)
+  - Rate limiting tests
+  - OutboundQueue tests
+  - Integration tests
+
 ### Added - Phase 4: Core Agent Loop
 
 #### Agent Runtime

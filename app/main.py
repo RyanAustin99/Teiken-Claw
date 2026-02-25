@@ -54,6 +54,16 @@ from app.queue.locks import LockManager, set_lock_manager
 from app.queue.throttles import RateLimiter, OutboundQueue, set_rate_limiter, set_outbound_queue
 from app.queue.dead_letter import DeadLetterQueue, set_dead_letter_queue
 
+# Interface imports
+from app.interfaces import (
+    TelegramBot,
+    TelegramSender,
+    CommandRouter,
+    HAS_TELEGRAM,
+    set_telegram_bot,
+    set_telegram_sender,
+)
+
 
 # Configure logging before app creation
 setup_logging()
@@ -72,6 +82,11 @@ _outbound_queue: OutboundQueue = None
 _tool_registry: ToolRegistry = None
 _agent_runtime: AgentRuntime = None
 
+# Global interface components
+_telegram_bot: TelegramBot = None
+_telegram_sender: TelegramSender = None
+_command_router: CommandRouter = None
+
 
 async def _initialize_queue_system() -> dict:
     """
@@ -86,12 +101,15 @@ async def _initialize_queue_system() -> dict:
     - WorkerPool
     - ToolRegistry
     - AgentRuntime
+    - TelegramSender
+    - TelegramBot (if enabled)
     
     Returns:
         dict: Initialization status for each component
     """
     global _dispatcher, _lock_manager, _dead_letter_queue, _worker_pool, _rate_limiter, _outbound_queue
     global _tool_registry, _agent_runtime
+    global _telegram_bot, _telegram_sender, _command_router
     
     status = {}
     
@@ -174,6 +192,44 @@ async def _initialize_queue_system() -> dict:
         set_worker_pool(_worker_pool)
         status["worker_pool"] = "initialized"
         
+        # 9. Initialize Command Router
+        logger.info("Initializing command router...")
+        _command_router = CommandRouter()
+        status["command_router"] = "initialized"
+        
+        # 10. Initialize Telegram Sender
+        logger.info("Initializing Telegram sender...")
+        _telegram_sender = TelegramSender(
+            token=settings.TELEGRAM_BOT_TOKEN,
+            outbound_queue=_outbound_queue,
+        )
+        set_telegram_sender(_telegram_sender)
+        status["telegram_sender"] = "initialized"
+        
+        # 11. Initialize Telegram Bot (if enabled)
+        if settings.ENABLE_TELEGRAM and HAS_TELEGRAM and settings.TELEGRAM_BOT_TOKEN:
+            logger.info("Initializing Telegram bot...")
+            _telegram_bot = TelegramBot(
+                token=settings.TELEGRAM_BOT_TOKEN,
+                command_router=_command_router,
+            )
+            set_telegram_bot(_telegram_bot)
+            status["telegram_bot"] = "initialized"
+        elif settings.ENABLE_TELEGRAM and not HAS_TELEGRAM:
+            logger.warning(
+                "Telegram enabled but python-telegram-bot not installed",
+                extra={"event": "telegram_not_available"}
+            )
+            status["telegram_bot"] = "disabled_no_library"
+        elif settings.ENABLE_TELEGRAM and not settings.TELEGRAM_BOT_TOKEN:
+            logger.warning(
+                "Telegram enabled but no bot token configured",
+                extra={"event": "telegram_no_token"}
+            )
+            status["telegram_bot"] = "disabled_no_token"
+        else:
+            status["telegram_bot"] = "disabled"
+        
         logger.info(
             "Queue system initialized",
             extra={"event": "queue_system_initialized", "status": status}
@@ -212,6 +268,18 @@ async def _start_queue_workers() -> dict:
             await _outbound_queue.start_sender()
             status["outbound_queue"] = "started"
         
+        # Start Telegram sender loop
+        if _telegram_sender:
+            logger.info("Starting Telegram sender loop...")
+            await _telegram_sender.start_sender_loop()
+            status["telegram_sender"] = "started"
+        
+        # Start Telegram bot (if enabled and initialized)
+        if _telegram_bot and settings.ENABLE_TELEGRAM:
+            logger.info("Starting Telegram bot...")
+            await _telegram_bot.start()
+            status["telegram_bot"] = "started"
+        
         logger.info(
             "Queue workers started",
             extra={"event": "queue_workers_started", "status": status}
@@ -237,7 +305,27 @@ async def _stop_queue_workers() -> dict:
     """
     status = {}
     
-    # Stop worker pool first
+    # Stop Telegram bot first
+    if _telegram_bot:
+        try:
+            logger.info("Stopping Telegram bot...")
+            await _telegram_bot.stop()
+            status["telegram_bot"] = "stopped"
+        except Exception as e:
+            logger.error(f"Error stopping Telegram bot: {e}", exc_info=True)
+            status["telegram_bot"] = f"error: {e}"
+    
+    # Stop Telegram sender
+    if _telegram_sender:
+        try:
+            logger.info("Stopping Telegram sender...")
+            await _telegram_sender.stop_sender(timeout=30.0)
+            status["telegram_sender"] = "stopped"
+        except Exception as e:
+            logger.error(f"Error stopping Telegram sender: {e}", exc_info=True)
+            status["telegram_sender"] = f"error: {e}"
+    
+    # Stop worker pool
     if _worker_pool:
         try:
             logger.info("Stopping worker pool...")

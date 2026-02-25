@@ -4,7 +4,7 @@
 
 ## Last Updated: 2026-02-25
 
-## Current Phase: Phase 4 Complete
+## Current Phase: Phase 5 Complete
 
 ---
 
@@ -62,13 +62,19 @@
 - Integration with worker pool
 - Comprehensive test suite (37+ tests)
 
-### 🔄 Phase 5: Interface Layer (NEXT)
-- Telegram bot integration
-- CLI interface
-- Full rate limiting integration
-- Message persistence
+### ✅ Phase 5: Telegram Interface + Command System (COMPLETE)
+- TelegramBot with python-telegram-bot (async polling)
+- TelegramSender with retry logic and rate limiting
+- CommandRouter for all command handling
+- TelegramAdapter for message format conversion
+- CLIInterface for interactive REPL
+- MarkdownV2 escaping utilities
+- Message chunking for long messages
+- Admin permission system
+- Full lifecycle integration in main.py
+- Comprehensive test suite
 
-### ⏳ Phase 6: Memory & Soul (PLANNED)
+### 🔄 Phase 6: Memory & Soul (NEXT)
 - Memory system integration
 - Soul/personality configuration
 - Long-term memory retrieval
