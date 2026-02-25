@@ -227,8 +227,8 @@ if (-not (Test-Path $AlembicIni)) {
         # Read output
         $AlembicOutput = Get-Content $TempOutFile -Raw -ErrorAction SilentlyContinue
         
-        # Check for actual errors (Traceback) vs just warnings/info
-        $HasError = $AlembicOutput -match "Traceback|Error|Exception"
+        # Check for actual errors (Traceback, Exception) vs just warnings/info
+        $HasError = $AlembicOutput -match "Traceback|Exception"
         
         if ($HasError) {
             Write-Warn "Alembic output: $AlembicOutput"
