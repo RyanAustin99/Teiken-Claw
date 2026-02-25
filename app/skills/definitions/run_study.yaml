@@ -1,0 +1,103 @@
+# Skill Definition: Run Study
+# Conducts research on a topic and generates a study summary
+
+version: "1.0"
+name: run_study
+description: Research a topic and generate a comprehensive study summary
+category: research
+tags:
+  - study
+  - research
+  - topic
+  - learn
+  - investigation
+
+triggers:
+  - keywords:
+      - study
+      - research
+      - investigate
+      - learn about
+      - tell me about
+    priority: 7
+
+inputs:
+  - name: topic
+    type: string
+    description: Topic to research
+    required: true
+  - name: depth
+    type: string
+    description: Depth of research (brief, standard, deep)
+    required: false
+    default: "standard"
+  - name: sources
+    type: integer
+    description: Number of sources to consult
+    required: false
+    default: 5
+  - name: format
+    type: string
+    description: Output format (outline, summary, detailed)
+    required: false
+    default: "summary"
+
+outputs:
+  - name: study_result
+    type: object
+    description: Complete study result
+  - name: key_findings
+    type: array
+    description: Key findings from research
+  - name: sources_consulted
+    type: array
+    description: List of sources consulted
+
+steps:
+  - id: research_topic
+    type: tool_call
+    description: Research the topic via web search
+    tool_name: web
+    tool_params:
+      action: search
+      query: "${topic}"
+      num_results: "${sources}"
+
+  - id: extract_info
+    type: transform
+    description: Extract key information from results
+    transform_expression: "[r for r in {{research_topic}} if r.get('content')]"
+    transform_input: "${research_topic}"
+
+  - id: generate_study
+    type: llm_prompt
+    description: Generate comprehensive study summary
+    prompt: |
+      Generate a {{depth}} level study on the topic: {{topic}}
+      
+      Research findings:
+      {{findings}}
+      
+      Format: {{format}}
+      
+      Include:
+      - Key concepts and definitions
+      - Important facts
+      - Analysis and implications
+      - Conclusion
+    prompt_inputs:
+      depth: "${depth}"
+      topic: "${topic}"
+      findings: "${extract_info}"
+      format: "${format}"
+
+  - id: compile_results
+    type: transform
+    description: Compile final study results
+    transform_expression: "{'topic': '{{topic}}', 'summary': {{generate_study}}, 'depth': '{{depth}}'}"
+    transform_input: "${generate_study}"
+
+  - id: return_study
+    type: return
+    description: Return the study result
+    return_value: "${compile_results}"

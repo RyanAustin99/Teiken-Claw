@@ -166,6 +166,11 @@ class AgentRuntime:
             }
         )
         
+        # Check for skill trigger (Phase 10)
+        skill_result = await self._check_skill_trigger(job)
+        if skill_result:
+            return skill_result
+        
         # Track tool calls for duplicate detection
         tool_call_history: List[ToolCallRecord] = []
         
@@ -618,7 +623,78 @@ class AgentRuntime:
                 "error_code": result.error_code,
             }
         )
-    
+
+    async def _check_skill_trigger(self, job: Job) -> Optional[AgentResult]:
+        """
+        Check if the job triggers a skill and execute it.
+        
+        This is called at the start of agent processing to see if
+        the message should be handled by a skill instead.
+        
+        Args:
+            job: Job to check
+            
+        Returns:
+            AgentResult if skill was triggered and executed, None otherwise
+        """
+        from app.skills import (
+            get_skill_router,
+            get_skill_engine,
+        )
+        
+        # Get user message
+        user_message = job.message
+        if not user_message:
+            return None
+        
+        # Route to check for skill triggers
+        router = get_skill_router()
+        route_result = router.route_intent(user_message)
+        
+        if not route_result:
+            return None
+        
+        skill_name, params = route_result
+        logger.info(
+            f"Skill triggered: {skill_name}",
+            extra={
+                "event": "skill_triggered",
+                "skill_name": skill_name,
+                "params": params,
+                "job_id": job.job_id,
+            }
+        )
+        
+        # Execute the skill
+        engine = get_skill_engine()
+        try:
+            result = engine.execute_skill(skill_name, params)
+            
+            if result.success:
+                # Convert skill result to agent result
+                output = result.outputs.get("result", str(result.outputs))
+                return AgentResult(
+                    ok=True,
+                    message=output,
+                    tool_calls=[],
+                )
+            else:
+                return AgentResult(
+                    ok=False,
+                    message=f"Skill error: {result.error}",
+                    error_code="skill_error",
+                    tool_calls=[],
+                )
+                
+        except Exception as e:
+            logger.error(f"Skill execution error: {e}", exc_info=True)
+            return AgentResult(
+                ok=False,
+                message=f"Skill execution failed: {str(e)}",
+                error_code="skill_execution_error",
+                tool_calls=[],
+            )
+
     async def _persist_user_message(self, job: Job) -> None:
         """
         Persist user message to memory store.

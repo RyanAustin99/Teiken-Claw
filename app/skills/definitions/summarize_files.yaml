@@ -1,0 +1,82 @@
+# Skill Definition: Summarize Files
+# Summarizes multiple files using LLM
+
+version: "1.0"
+name: summarize_files
+description: Read and summarize multiple files using AI
+category: utility
+tags:
+  - files
+  - summarize
+  - summary
+  - read
+  - ai
+
+triggers:
+  - keywords:
+      - summarize
+      - files summary
+      - summarize files
+      - summary of
+    priority: 8
+
+inputs:
+  - name: file_paths
+    type: array
+    description: List of file paths to summarize
+    required: true
+  - name: format
+    type: string
+    description: Output format (brief, detailed, markdown)
+    required: false
+    default: "brief"
+  - name: max_length
+    type: integer
+    description: Maximum length of summary in words
+    required: false
+    default: 200
+
+outputs:
+  - name: summaries
+    type: object
+    description: Dictionary of file paths to summaries
+  - name: combined_summary
+    type: string
+    description: Combined summary of all files
+
+steps:
+  - id: read_files
+    type: tool_call
+    description: Read all specified files
+    tool_name: files
+    tool_params:
+      action: read_multiple
+      paths: "${file_paths}"
+
+  - id: summarize_each
+    type: llm_prompt
+    description: Generate summary for each file
+    prompt: |
+      Summarize the following file content in a {{format}} format (max {{max_length}} words):
+      
+      File: {{file_path}}
+      Content:
+      {{content}}
+      
+      Provide a clear, concise summary of the key points.
+    prompt_inputs:
+      format: "${format}"
+      max_length: "${max_length}"
+      file_path: "${file_paths}"
+      content: "${read_files}"
+
+  - id: combine_summaries
+    type: transform
+    description: Combine individual summaries
+    transform_expression: "Summaries: {{summaries}}"
+    transform_input: "${summarize_each}"
+
+  - id: return_result
+    type: return
+    description: Return combined summary
+    return_value: "${combine_summaries}"

@@ -5,6 +5,58 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - Unreleased
+
+### Added - Phase 10: Skills System
+
+#### Skill System Core
+- `app/skills/__init__.py` - Skills package exports
+- `app/skills/schema.py` - YAML skill schema validation
+  - SkillDefinition, SkillStep, SkillTrigger, SkillInput, SkillOutput models
+  - StepType enum (tool_call, llm_prompt, condition, transform, subagent, schedule_create, return)
+  - Schema validation functions
+- `app/skills/loader.py` - Skill definitions loader
+  - SkillLoader class
+  - load_skill(), load_all_skills(), validate_skill() methods
+  - Skill search and category filtering
+- `app/skills/engine.py` - Skill execution engine
+  - SkillEngine class with execute_skill() method
+  - Step executors for each step type
+  - ExecutionContext for state management
+  - SkillResult for execution results
+- `app/skills/router.py` - Skill routing
+  - SkillRouter class
+  - route_intent() for detecting skill triggers
+  - Direct invocation detection (/skill <name>)
+  - Keyword and pattern matching
+
+#### Built-in Skills
+- `app/skills/definitions/create_job.yaml` - Job creation skill
+- `app/skills/definitions/summarize_files.yaml` - File summarization skill
+- `app/skills/definitions/run_study.yaml` - Study/research workflow skill
+- `app/skills/definitions/debug_report.yaml` - Debug report generation skill
+
+#### Integration
+- `app/main.py` - Skills initialization on startup
+  - SkillLoader, SkillEngine, SkillRouter initialization
+  - Tool registration with engine
+- `app/interfaces/telegram_commands.py` - Skill commands
+  - handle_skills() - List and run skills
+  - _list_skills() - List available skills
+  - _execute_skill() - Execute skill and format result
+- `app/interfaces/telegram_bot.py` - /skills command handler
+- `app/agent/runtime.py` - Skill router integration
+  - _check_skill_trigger() - Pre-process check for skill triggers
+  - Automatic skill execution before agent processing
+
+#### Tests
+- `tests/test_skills.py` - Comprehensive skill system tests
+  - Schema validation tests
+  - Loader tests
+  - Engine execution tests
+  - Router matching tests
+  - Integration tests
+
 ## [1.0.0] - 2026-02-25
 
 ### Added - Phase 9: Scheduler / Cron System

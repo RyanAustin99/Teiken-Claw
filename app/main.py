@@ -88,6 +88,19 @@ from app.scheduler import (
     set_scheduler_persistence,
 )
 
+# Phase 10: Skills imports
+from app.skills import (
+    SkillLoader,
+    SkillEngine,
+    SkillRouter,
+    get_skill_loader,
+    get_skill_engine,
+    get_skill_router,
+    set_skill_loader,
+    set_skill_engine,
+    set_skill_router,
+)
+
 
 # Configure logging before app creation
 setup_logging()
@@ -128,6 +141,11 @@ _scheduler_service: SchedulerService = None
 _scheduler_executor: SchedulerExecutor = None
 _control_state_manager: ControlStateManager = None
 _scheduler_persistence: SchedulerPersistence = None
+
+# Phase 10: Global skills components
+_skill_loader: SkillLoader = None
+_skill_engine: SkillEngine = None
+_skill_router: SkillRouter = None
 
 
 async def _initialize_queue_system() -> dict:
@@ -334,6 +352,36 @@ async def _initialize_queue_system() -> dict:
         )
         set_worker_pool(_worker_pool)
         status["worker_pool"] = "initialized"
+        
+        # 21. Initialize Skill Loader (Phase 10)
+        logger.info("Initializing skill loader...")
+        global _skill_loader
+        _skill_loader = get_skill_loader()
+        set_skill_loader(_skill_loader)
+        # Load all skills on startup
+        skills = _skill_loader.load_all_skills()
+        status["skill_loader"] = "initialized"
+        status["skill_count"] = len(skills)
+        
+        # 22. Initialize Skill Engine (Phase 10)
+        logger.info("Initializing skill engine...")
+        global _skill_engine
+        _skill_engine = get_skill_engine()
+        set_skill_engine(_skill_engine)
+        # Register tools with engine
+        from app.tools import get_tool_registry
+        tool_registry = get_tool_registry()
+        for tool_name in tool_registry.list_tools():
+            tool = tool_registry.get_tool(tool_name)
+            _skill_engine.register_tool(tool_name, tool)
+        status["skill_engine"] = "initialized"
+        
+        # 23. Initialize Skill Router (Phase 10)
+        logger.info("Initializing skill router...")
+        global _skill_router
+        _skill_router = get_skill_router()
+        set_skill_router(_skill_router)
+        status["skill_router"] = "initialized"
         
         # 13. Initialize Command Router
         logger.info("Initializing command router...")

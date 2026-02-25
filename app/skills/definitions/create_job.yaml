@@ -1,0 +1,76 @@
+# Skill Definition: Create Job
+# Creates a scheduled job with the specified schedule and action
+
+version: "1.0"
+name: create_job
+description: Create a scheduled job with cron expression
+category: scheduler
+tags:
+  - job
+  - schedule
+  - cron
+  - automation
+
+triggers:
+  - keywords:
+      - schedule
+      - job
+      - cron
+      - schedule job
+      - create job
+    priority: 10
+
+inputs:
+  - name: job_name
+    type: string
+    description: Name of the job to create
+    required: true
+  - name: schedule
+    type: string
+    description: Cron expression for the schedule
+    required: true
+  - name: action
+    type: string
+    description: Action to perform when job runs
+    required: true
+  - name: description
+    type: string
+    description: Optional description of the job
+    required: false
+    default: ""
+
+outputs:
+  - name: job_id
+    type: string
+    description: ID of the created job
+  - name: status
+    type: string
+    description: Status of the job creation
+
+steps:
+  - id: validate_schedule
+    type: condition
+    description: Validate the cron schedule format
+    condition_expression: "${schedule} matches pattern ^[^ ]+ [^ ]+ [^ ]+ [^ ]+ [^ ]+$"
+    on_failure: invalid_schedule
+
+  - id: create_job
+    type: tool_call
+    description: Create the scheduled job
+    tool_name: scheduler
+    tool_params:
+      action: create
+      job_name: "${job_name}"
+      cron: "${schedule}"
+      command: "${action}"
+    on_success: confirm_creation
+
+  - id: invalid_schedule
+    type: return
+    description: Return error for invalid schedule
+    return_value: "Error: Invalid cron schedule format"
+
+  - id: confirm_creation
+    type: return
+    description: Return success confirmation
+    return_value: "Job '${job_name}' created successfully with schedule '${schedule}'"

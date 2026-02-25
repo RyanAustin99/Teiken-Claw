@@ -133,6 +133,9 @@ class TelegramBot:
             CommandHandler("jobs", self._handle_jobs)
         )
         self._application.add_handler(
+            CommandHandler("skills", self._handle_skills)
+        )
+        self._application.add_handler(
             CommandHandler("pause", self._handle_pause)
         )
         self._application.add_handler(
@@ -499,7 +502,27 @@ class TelegramBot:
             response,
             parse_mode="Markdown"
         )
-    
+
+    async def _handle_skills(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /skills command."""
+        if not update.effective_message:
+            return
+
+        chat_id = update.effective_chat.id
+        user_id = update.effective_user.id if update.effective_user else 0
+        args = context.args if context.args else []
+
+        # Use command router if available
+        if self.command_router:
+            response = await self.command_router.handle_skills(chat_id, user_id, args)
+        else:
+            response = "Skills not available."
+
+        await update.effective_message.reply_text(
+            response,
+            parse_mode="Markdown"
+        )
+
     async def _handle_pause(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /pause command."""
         if not update.effective_message:

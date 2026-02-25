@@ -973,7 +973,137 @@ class CommandRouter:
             f"System restored to normal operation\\.\n"
             f"Previous state: {current_state}"
         )
-    
+
+    # =========================================================================
+    # Skills Commands (Phase 10)
+    # =========================================================================
+
+    async def handle_skills(
+        self,
+        chat_id: int,
+        user_id: int,
+        args: Optional[List[str]] = None
+    ) -> str:
+        """
+        Handle /skills command.
+
+        Commands:
+            /skills - List all available skills
+            /skills <name> - Run a specific skill
+            /skills <name> <params> - Run skill with parameters
+
+        Args:
+            chat_id: Telegram chat ID
+            user_id: Telegram user ID
+            args: Command arguments
+
+        Returns:
+            str: Skills info or execution result
+        """
+        from app.skills import (
+            get_skill_loader,
+            get_skill_engine,
+            get_skill_router,
+        )
+
+        loader = get_skill_loader()
+        engine = get_skill_engine()
+        router = get_skill_router()
+
+        args = args or []
+
+        # No args - list all skills
+        if not args:
+            return await self._list_skills(loader, router)
+
+        skill_name = args[0].lower()
+
+        # Check if skill exists
+        skill = loader.get_skill(skill_name)
+        if not skill:
+            # Maybe it's a keyword trigger
+            matched = router.get_skill_by_keyword(skill_name)
+            if matched:
+                skill_name = matched.name
+                skill = matched
+            else:
+                # Check for suggestions
+                suggestions = router.suggest_skills(skill_name, limit=3)
+                if suggestions:
+                    suggestion_text = "\n".join([f"• {s['name']} - {s['description'][:50]}..." for s in suggestions])
+                    return (
+                        f"❌ Skill '{skill_name}' not found.\n\n"
+                        f"*Did you mean?*\n{suggestion_text}"
+                    )
+                return f"❌ Skill '{skill_name}' not found."
+
+        # Parse remaining args as parameters
+        params = {}
+        for arg in args[1:]:
+            if '=' in arg:
+                key, value = arg.split('=', 1)
+                params[key] = value
+
+        # Execute the skill
+        return await self._execute_skill(engine, skill_name, params)
+
+    async def _list_skills(self, loader, router) -> str:
+        """List all available skills."""
+        skills = loader.list_skills()
+
+        if not skills:
+            return (
+                "🔧 *Available Skills*\n\n"
+                "No skills found. Skills should be defined in YAML files."
+            )
+
+        lines = ["🔧 *Available Skills*\n"]
+
+        for skill_name in skills:
+            skill = loader.get_skill(skill_name)
+            if skill:
+                # Get trigger keywords
+                triggers = []
+                for t in skill.triggers:
+                    triggers.extend(t.keywords[:2])
+                trigger_text = ", ".join(triggers) if triggers else "(no triggers)"
+
+                lines.append(f"• *{skill_name}* - {skill.description[:40]}...")
+                lines.append(f"  Triggers: {trigger_text}")
+
+                # Show inputs
+                if skill.inputs:
+                    input_names = [inp.name for inp in skill.inputs[:3]]
+                    lines.append(f"  Inputs: {', '.join(input_names)}")
+
+        lines.append("")
+        lines.append("Use /skills <name> to run a skill.")
+        lines.append("Use /skill <name> param=value for parameters.")
+
+        return "\n".join(lines)
+
+    async def _execute_skill(self, engine, skill_name: str, params: dict) -> str:
+        """Execute a skill and return the result."""
+        try:
+            result = engine.execute_skill(skill_name, params)
+
+            if result.success:
+                output_text = result.outputs.get("result", str(result.outputs))
+                return (
+                    f"✅ *Skill: {skill_name}*\n\n"
+                    f"{output_text}\n\n"
+                    f"_Executed in {result.execution_time_ms:.0f}ms_"
+                )
+            else:
+                return (
+                    f"❌ *Skill Failed: {skill_name}*\n\n"
+                    f"{result.error}"
+                )
+
+        except Exception as e:
+            logger.error(f"Skill execution error: {e}", exc_info=True)
+            return f"❌ Error executing skill: {str(e)}"
+
     # =========================================================================
     # Admin Commands
     # =========================================================================

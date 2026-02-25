@@ -1,0 +1,107 @@
+# Skill Definition: Debug Report
+# Collects and analyzes system state for debugging
+
+version: "1.0"
+name: debug_report
+description: Collect system state and generate a debugging report
+category: utility
+tags:
+  - debug
+  - report
+  - status
+  - diagnose
+  - troubleshoot
+
+triggers:
+  - keywords:
+      - debug
+      - report
+      - status
+      - diagnose
+      - what's wrong
+      - troubleshoot
+    priority: 9
+
+inputs:
+  - name: include_logs
+    type: boolean
+    description: Include recent logs in report
+    required: false
+    default: true
+  - name: include_trace
+    type: boolean
+    description: Include stack traces if available
+    required: false
+    default: true
+  - name: component
+    type: string
+    description: Specific component to debug (optional)
+    required: false
+    default: ""
+
+outputs:
+  - name: report
+    type: object
+    description: Complete debug report
+  - name: issues_found
+    type: array
+    description: List of issues identified
+  - name: suggestions
+    type: array
+    description: Suggested fixes
+
+steps:
+  - id: collect_status
+    type: tool_call
+    description: Collect system status information
+    tool_name: system
+    tool_params:
+      action: status
+
+  - id: gather_logs
+    type: condition
+    description: Check if logs should be included
+    condition_expression: "${include_logs} == True"
+
+  - id: get_logs
+    type: tool_call
+    description: Gather relevant logs
+    tool_name: system
+    tool_params:
+      action: logs
+      component: "${component}"
+      lines: 100
+
+  - id: analyze_failures
+    type: llm_prompt
+    description: Analyze logs for failures and issues
+    prompt: |
+      Analyze the following system information and logs to identify issues:
+      
+      System Status:
+      {{status}}
+      
+      Logs:
+      {{logs}}
+      
+      Identify:
+      1. Any errors or warnings
+      2. Performance issues
+      3. Configuration problems
+      4. Suggested fixes
+      
+      Format the response as JSON with keys: issues_found, suggestions
+    prompt_inputs:
+      status: "${collect_status}"
+      logs: "${get_logs}"
+
+  - id: generate_report
+    type: transform
+    description: Generate final debug report
+    transform_expression: "{'status': {{collect_status}}, 'issues': {{analyze_failures}}, 'logs_included': {{include_logs}}}"
+    transform_input: "${analyze_failures}"
+
+  - id: return_report
+    type: return
+    description: Return the debug report
+    return_value: "${generate_report}"
