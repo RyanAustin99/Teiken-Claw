@@ -46,7 +46,8 @@ class SkillLoader:
         """Set the skills directory and clear cached skills."""
         self._skills_dir = value
         self._loaded = False
-        self._skills.clear()
+        if hasattr(self, '_skills'):
+            self._skills.clear()
     
     def get_skill_path(self, name: str) -> Path:
         """Get the file path for a skill by name.

@@ -239,3 +239,26 @@ class MemoryExtractionRules:
             confidence -= 0.3
         
         return max(0.0, min(1.0, confidence))
+
+
+# =============================================================================
+# Global Extraction Rules Instance
+# =============================================================================
+
+_extraction_rules: Optional[MemoryExtractionRules] = None
+
+
+def get_extraction_rules() -> MemoryExtractionRules:
+    """Get or create the global extraction rules instance."""
+    global _extraction_rules
+    
+    if _extraction_rules is None:
+        _extraction_rules = MemoryExtractionRules()
+    
+    return _extraction_rules
+
+
+def set_extraction_rules(rules: MemoryExtractionRules) -> None:
+    """Set the global extraction rules instance (for testing or DI)."""
+    global _extraction_rules
+    _extraction_rules = rules

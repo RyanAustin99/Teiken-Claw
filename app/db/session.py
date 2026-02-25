@@ -112,4 +112,8 @@ __all__ = [
     "get_db_context",
     "create_session",
     "get_session_factory",
+    "get_db_session",  # Alias for create_session
 ]
+
+# Alias for backward compatibility
+get_db_session = create_session

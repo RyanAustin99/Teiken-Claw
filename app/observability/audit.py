@@ -16,7 +16,7 @@ from typing import Any, Dict, Optional
 import json
 import uuid
 
-from sqlalchemy import Column, Integer, String, DateTime, Text, Index
+from sqlalchemy import Column, Integer, String, DateTime, Text, Index, JSON
 from sqlalchemy.orm import Session
 
 from app.db.base import Base
@@ -42,21 +42,20 @@ class AuditEventType(str, Enum):
 class AppEvent(Base):
     """Database model for application events (audit log)."""
     __tablename__ = "app_events"
+    __table_args__ = (
+        {"extend_existing": True},
+    )
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    event_type = Column(String(50), nullable=False, index=True)
-    event_id = Column(String(36), default=lambda: str(uuid.uuid4()), unique=True, nullable=False, index=True)
-    timestamp = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
-    details = Column(Text, nullable=True)
-    session_id = Column(Integer, nullable=True, index=True)
-    thread_id = Column(Integer, nullable=True, index=True)
-    user_id = Column(String(255), nullable=True, index=True)
-    component = Column(String(100), nullable=True, index=True)
-    trace_id = Column(String(36), nullable=True, index=True)
+    event_type = Column(String(100), nullable=False, index=True)
+    event_data = Column(JSON, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
     
+    # Index definitions (using column names that exist)
     __table_args__ = (
-        Index("ix_app_events_type_timestamp", "event_type", "timestamp"),
-        Index("ix_app_events_session_timestamp", "session_id", "timestamp"),
+        Index("ix_app_events_type_created", "event_type", "created_at"),
+        Index("ix_app_events_session_created", "session_id", "created_at"),
+        {"extend_existing": True},
     )
 
 

@@ -49,7 +49,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable, Optional, ParamSpec, TypeVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 from app.agent.errors import CircuitBreakerOpenError
 
@@ -106,16 +106,8 @@ class CircuitBreaker(BaseModel):
         default=60.0, ge=0.0, description="Timeout before half-open"
     )
 
-    # Thread lock for state transitions
-    _lock: threading.Lock = Field(default_factory=threading.Lock, exclude=True)
-
-    class Config:
-        arbitrary_types_allowed = True
-
-    def __init__(self, **data: Any) -> None:
-        super().__init__(**data)
-        # Pydantic doesn't handle threading.Lock well, so we set it manually
-        object.__setattr__(self, "_lock", threading.Lock())
+    # Thread lock for state transitions - using PrivateAttr for Pydantic v2 compatibility
+    _lock: threading.Lock = PrivateAttr(default_factory=lambda: threading.Lock())
 
     def can_execute(self) -> bool:
         """

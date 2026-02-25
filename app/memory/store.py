@@ -597,3 +597,26 @@ class MemoryStore:
     def close(self) -> None:
         """Close the database session."""
         self._session.close()
+
+
+# =============================================================================
+# Global Memory Store Instance
+# =============================================================================
+
+_memory_store: Optional[MemoryStore] = None
+
+
+def get_memory_store() -> MemoryStore:
+    """Get or create the global memory store instance."""
+    global _memory_store
+    
+    if _memory_store is None:
+        _memory_store = MemoryStore()
+    
+    return _memory_store
+
+
+def set_memory_store(store: MemoryStore) -> None:
+    """Set the global memory store instance (for testing or DI)."""
+    global _memory_store
+    _memory_store = store

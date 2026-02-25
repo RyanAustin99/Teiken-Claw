@@ -35,8 +35,8 @@ class ThreadState:
         
         # Get from database
         session = self.store.get_session(session_id)
-        if session and session.metadata:
-            current_thread_id = session.metadata.get("current_thread_id")
+        if session and session.metadata_:
+            current_thread_id = session.metadata_.get("current_thread_id")
             if current_thread_id:
                 self._thread_cache[session_id] = current_thread_id
                 return current_thread_id
@@ -47,12 +47,12 @@ class ThreadState:
         """Set the current thread for a session."""
         session = self.store.get_session(session_id)
         if session:
-            if not session.metadata:
-                session.metadata = {}
-            session.metadata["current_thread_id"] = thread_id
+            if not session.metadata_:
+                session.metadata_ = {}
+            session.metadata_["current_thread_id"] = thread_id
             
             # Update session to refresh cache
-            self.store.update_session(session_id, {"metadata": session.metadata})
+            self.store.update_session(session_id, {"metadata_": session.metadata_})
             
             # Update cache
             self._thread_cache[session_id] = thread_id
@@ -68,6 +68,29 @@ class ThreadState:
         self.set_current_thread(session_id, thread.id)
         
         return thread.id
+
+
+# =============================================================================
+# Global Thread State Instance
+# =============================================================================
+
+_thread_state: Optional[ThreadState] = None
+
+
+def get_thread_state() -> ThreadState:
+    """Get or create the global thread state instance."""
+    global _thread_state
+    
+    if _thread_state is None:
+        _thread_state = ThreadState()
+    
+    return _thread_state
+
+
+def set_thread_state(state: ThreadState) -> None:
+    """Set the global thread state instance (for testing or DI)."""
+    global _thread_state
+    _thread_state = state
     
     def get_thread_history(self, session_id: int) -> List[Dict]:
         """Get thread history for a session."""
