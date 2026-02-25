@@ -127,7 +127,9 @@ if (-not (Test-Path $RequirementsFile)) {
     exit 1
 }
 
-& $PipVenv install --upgrade pip 2>&1 | Out-Null
+# pip 25.3+ requires using 'python -m pip' instead of pip.exe for self-upgrade
+$PythonVenvExecutable = Join-Path $VenvPath "Scripts\python.exe"
+& $PythonVenvExecutable -m pip install --upgrade pip 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) {
     Write-Fail "Failed to upgrade pip"
     exit 1
