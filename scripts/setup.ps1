@@ -195,9 +195,28 @@ $AlembicIni = Join-Path $ProjectRoot "alembic.ini"
 if (-not (Test-Path $AlembicIni)) {
     Write-Warn "alembic.ini not found - skipping database initialization"
 } else {
-    & $PythonVenv -m alembic upgrade head 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Write-Warn "Database migration had issues - this may be normal for first run"
+    # Verify .env exists before running alembic
+    $EnvFile = Join-Path $ProjectRoot ".env"
+    if (-not (Test-Path $EnvFile)) {
+        Write-Warn ".env not found - creating from .env.example"
+        $EnvExample = Join-Path $ProjectRoot ".env.example"
+        if (Test-Path $EnvExample) {
+            Copy-Item $EnvExample $EnvFile
+        }
+    }
+    
+    # Run alembic and capture output properly
+    $AlembicOutput = & $PythonVenv -m alembic upgrade head 2>&1 | Out-String
+    $AlembicExitCode = $LASTEXITCODE
+    
+    # Display output regardless of success/failure
+    if ($AlembicOutput) {
+        Write-Info $AlembicOutput
+    }
+    
+    if ($AlembicExitCode -ne 0) {
+        Write-Warn "Database migration had issues (exit code: $AlembicExitCode)"
+        Write-Warn "This may be normal for first run or if tables already exist"
     } else {
         Write-Success "Database initialized"
     }
