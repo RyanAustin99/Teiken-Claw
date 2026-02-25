@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.0.0] - 2026-02-25
 
+### Added - Phase 3: Ollama Client, Retry Logic, and Circuit Breaker
+
+#### Ollama HTTP Client
+- `app/agent/ollama_client.py` - Async HTTP client for Ollama API
+  - ChatMessage, ChatResponse, EmbeddingResponse, ModelInfo models
+  - chat() method for completions with tool calling support
+  - embeddings() method for text embeddings
+  - list_models() method for available models
+  - check_health() method for connectivity verification
+  - Automatic retry with exponential backoff
+  - Circuit breaker protection
+  - Timeout handling and error classification
+  - Singleton pattern via get_ollama_client()
+
+#### Custom Error Classes
+- `app/agent/errors.py` - Comprehensive error hierarchy
+  - TeikenClawError (base class)
+  - OllamaError -> OllamaTransportError, OllamaResponseError, OllamaModelError
+  - ToolError -> ToolValidationError, ToolExecutionError
+  - SystemError -> PolicyViolationError, PausedStateError, CircuitBreakerOpenError
+  - is_retryable_error() classification function
+  - classify_http_status() for HTTP status classification
+
+#### Retry Utilities
+- `app/agent/retries.py` - Retry logic with exponential backoff
+  - RetryPolicy Pydantic model with configurable parameters
+  - exponential_backoff_with_jitter() function
+  - retry_async() decorator for automatic retry
+  - Default retry policies:
+    - OLLAMA_CHAT_RETRY_POLICY (3 attempts, 1s base, 30s max)
+    - OLLAMA_EMBED_RETRY_POLICY (3 attempts, 0.5s base, 10s max)
+    - WEB_FETCH_RETRY_POLICY (2 attempts, 1s base, 10s max)
+    - TELEGRAM_SEND_RETRY_POLICY (3 attempts, 1s base, 30s max)
+  - RetryStats for observability
+
+#### Circuit Breaker
+- `app/agent/circuit_breaker.py` - Fault tolerance pattern
+  - CircuitState enum (CLOSED, OPEN, HALF_OPEN)
+  - CircuitBreaker class with state transitions:
+    - CLOSED -> OPEN (after failure_threshold)
+    - OPEN -> HALF_OPEN (after timeout)
+    - HALF_OPEN -> CLOSED (after success_threshold)
+    - HALF_OPEN -> OPEN (on failure)
+  - circuit_breaker_protect() decorator
+  - Global Ollama circuit breaker singleton
+  - CircuitBreakerMetrics for monitoring
+
+#### Configuration
+- New Ollama circuit breaker settings in `app/config/settings.py`:
+  - OLLAMA_CIRCUIT_BREAKER_FAILURE_THRESHOLD (default: 5)
+  - OLLAMA_CIRCUIT_BREAKER_TIMEOUT_SEC (default: 60.0)
+  - OLLAMA_CIRCUIT_BREAKER_SUCCESS_THRESHOLD (default: 1)
+
+#### Application Integration
+- Updated `app/main.py`:
+  - Ollama connectivity check in /health/ready
+  - Circuit breaker status in /health
+  - Agent module imports
+
+#### Tests
+- `tests/test_ollama_client.py` - Comprehensive tests
+  - Error classification tests
+  - Retry policy and backoff tests
+  - Circuit breaker state transition tests
+  - Ollama client tests (chat, embeddings, models)
+  - Error handling tests (timeout, network, HTTP errors)
+  - Integration tests for retry + circuit breaker
+
+---
+
 ### Added - Phase 2: Queue, Workers, Throttles, and Dead-Letter
 
 #### Job Queue System

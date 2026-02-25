@@ -28,6 +28,14 @@ from app.config.constants import (
 )
 from app.db import init_db, verify_db, dispose_engine
 
+# Agent imports
+from app.agent import (
+    get_ollama_client,
+    get_ollama_circuit_breaker,
+    get_circuit_breaker_metrics,
+    get_all_circuit_breaker_status,
+)
+
 # Queue system imports
 from app.queue.dispatcher import JobDispatcher, set_dispatcher
 from app.queue.workers import WorkerPool, set_worker_pool
@@ -395,10 +403,19 @@ async def health_check() -> dict:
     Returns:
         dict: Health status and version info.
     """
+    # Get circuit breaker metrics
+    cb_metrics = get_circuit_breaker_metrics()
+    
     return {
         "status": "healthy",
         "version": settings.APP_VERSION,
         "environment": settings.ENVIRONMENT,
+        "circuit_breakers": {
+            "total": cb_metrics.total_breakers,
+            "healthy": cb_metrics.closed_count,
+            "open": cb_metrics.open_count,
+            "half_open": cb_metrics.half_open_count,
+        },
     }
 
 
@@ -407,7 +424,7 @@ async def readiness_check() -> dict:
     """
     Readiness check endpoint.
     
-    Verifies database connectivity and queue system status.
+    Verifies database connectivity, queue system status, and Ollama connectivity.
     
     Returns:
         dict: Readiness status with component details.
@@ -430,6 +447,25 @@ async def readiness_check() -> dict:
             "error": str(e),
         }
         overall_status = "unhealthy"
+    
+    # Check Ollama connectivity
+    try:
+        ollama_client = get_ollama_client()
+        ollama_health = await ollama_client.check_health()
+        components["ollama"] = {
+            "status": ollama_health["status"],
+            "base_url": ollama_health.get("base_url"),
+            "model_count": ollama_health.get("model_count", 0),
+            "circuit_breaker": ollama_health.get("circuit_breaker", {}).get("state", "unknown"),
+        }
+        if ollama_health["status"] != "healthy":
+            overall_status = "degraded"
+    except Exception as e:
+        components["ollama"] = {
+            "status": "error",
+            "error": str(e),
+        }
+        overall_status = "degraded"  # Ollama not critical for basic readiness
     
     # Check queue system
     if _dispatcher:

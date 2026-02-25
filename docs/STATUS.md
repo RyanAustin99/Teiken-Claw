@@ -4,7 +4,7 @@
 
 ## Last Updated: 2026-02-25
 
-## Current Phase: Phase 2 Complete
+## Current Phase: Phase 3 Complete
 
 ---
 
@@ -37,13 +37,18 @@
 - Full application integration
 - Comprehensive test suite
 
-### 🔄 Phase 3: Core Agent Implementation (NEXT)
-- Ollama client integration
-- Agent core logic
-- Tool execution framework
-- Memory system implementation
+### ✅ Phase 3: Ollama Client, Retry Logic, Circuit Breaker (COMPLETE)
+- Ollama HTTP client with async httpx
+- Chat completions with tool calling support
+- Text embeddings API
+- Model listing and health checks
+- Custom error hierarchy (transport, response, model errors)
+- Retry utilities with exponential backoff and jitter
+- Circuit breaker pattern for fault tolerance
+- Health check integration with Ollama status
+- Comprehensive test suite
 
-### ⏳ Phase 4: Interface Layer (PLANNED)
+### 🔄 Phase 4: Interface Layer (NEXT)
 - Telegram bot integration
 - CLI interface
 - Full rate limiting integration
@@ -66,7 +71,9 @@ None at this time.
 1. Install dependencies: `pip install -r requirements.txt`
 2. Copy `.env.example` to `.env` and configure
 3. Run database migrations: `alembic upgrade head`
-4. Start the application: `python -m app.main`
+4. Ensure Ollama is running: `ollama serve`
+5. Pull required models: `ollama pull llama3.2`
+6. Start the application: `python -m app.main`
 
 ---
 
@@ -83,6 +90,8 @@ None at this time.
 - Queue: In-memory priority queue (max 1000 jobs)
 - Workers: 3 concurrent workers (configurable)
 - Rate Limiting: 30 msg/sec global, 1 msg/sec per chat
+- Ollama: Circuit breaker (5 failures to open, 60s timeout)
+- Retry: Exponential backoff with jitter (3 attempts max)
 - Startup time: < 3 seconds (estimated)
 
 ---
@@ -95,6 +104,39 @@ None at this time.
 - Executable allowlist for code execution tools
 - Lock timeouts prevent deadlocks
 - Idempotency keys prevent duplicate processing
+- Circuit breaker prevents cascading failures
+
+---
+
+## Agent System Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     OllamaClient                             │
+│  - Async HTTP with httpx                                    │
+│  - Chat, Embeddings, Models APIs                            │
+│  - Tool calling support                                     │
+└───────────────────────────┬─────────────────────────────────┘
+                            │
+            ┌───────────────┴───────────────┐
+            │                               │
+            ▼                               ▼
+┌─────────────────────────┐   ┌─────────────────────────────┐
+│    Retry Logic          │   │    Circuit Breaker          │
+│  - Exponential backoff  │   │  - CLOSED/OPEN/HALF_OPEN    │
+│  - Jitter               │   │  - Failure threshold: 5     │
+│  - Max 3 attempts       │   │  - Timeout: 60s             │
+└─────────────────────────┘   └─────────────────────────────┘
+            │                               │
+            └───────────────┬───────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Error Classification                      │
+│  Retryable: Transport, Timeout, 5xx, 429                    │
+│  Permanent: Response (4xx), Model Not Found                 │
+└─────────────────────────────────────────────────────────────┘
+```
 
 ---
 

@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     OLLAMA_TIMEOUT_SEC: int = 120
     OLLAMA_MAX_CONCURRENCY: int = 3
     
+    # Ollama Circuit Breaker Configuration
+    OLLAMA_CIRCUIT_BREAKER_FAILURE_THRESHOLD: int = 5
+    OLLAMA_CIRCUIT_BREAKER_TIMEOUT_SEC: float = 60.0
+    OLLAMA_CIRCUIT_BREAKER_SUCCESS_THRESHOLD: int = 1
+    
     # =========================================================================
     # Telegram Configuration
     # =========================================================================

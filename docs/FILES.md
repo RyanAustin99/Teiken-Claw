@@ -54,8 +54,12 @@ app/
 │   ├── locks.py          # Per-chat/session locks
 │   ├── throttles.py      # Rate limiting & outbound queue
 │   └── dead_letter.py    # Dead-letter queue management
-├── agent/                # Core agent logic
-│   └── __init__.py
+├── agent/                # Core agent logic (Phase 3)
+│   ├── __init__.py       # Package exports
+│   ├── ollama_client.py  # Ollama HTTP client
+│   ├── errors.py         # Custom error classes
+│   ├── retries.py        # Retry logic and policies
+│   └── circuit_breaker.py # Circuit breaker pattern
 ├── interfaces/           # Interface adapters
 │   └── __init__.py
 ├── memory/               # Memory system
@@ -111,7 +115,8 @@ docs/
 ├── STATUS.md            # Project status
 ├── PHASE0_DELIVERY_REPORT.md  # Phase 0 report
 ├── PHASE1_DELIVERY_REPORT.md  # Phase 1 report
-└── PHASE2_DELIVERY_REPORT.md  # Phase 2 report (to be created)
+├── PHASE2_DELIVERY_REPORT.md  # Phase 2 report
+└── PHASE3_DELIVERY_REPORT.md  # Phase 3 report (to be created)
 ```
 
 ### `/logs` - Application Logs
@@ -132,7 +137,8 @@ Unit and integration tests.
 tests/
 ├── __init__.py
 ├── test_app.py          # Basic app tests
-└── test_queue.py        # Queue system tests (Phase 2)
+├── test_queue.py        # Queue system tests (Phase 2)
+└── test_ollama_client.py # Agent system tests (Phase 3)
 ```
 
 ### `/.github` - GitHub Configuration
@@ -164,6 +170,17 @@ GitHub-specific configuration.
 
 ---
 
+## Agent System Files (Phase 3)
+
+| File | Purpose |
+|------|---------|
+| `app/agent/ollama_client.py` | Ollama HTTP client with retry and circuit breaker |
+| `app/agent/errors.py` | Custom error classes for agent operations |
+| `app/agent/retries.py` | Retry logic with exponential backoff |
+| `app/agent/circuit_breaker.py` | Circuit breaker pattern for fault tolerance |
+
+---
+
 ## File Naming Conventions
 
 - **Python modules**: `snake_case.py`
@@ -181,6 +198,10 @@ GitHub-specific configuration.
 | `app/main.py` | FastAPI application entry point |
 | `app/config/settings.py` | Environment configuration |
 | `app/db/models.py` | Database models |
+| `app/agent/ollama_client.py` | Ollama HTTP client |
+| `app/agent/errors.py` | Custom error classes |
+| `app/agent/retries.py` | Retry logic and policies |
+| `app/agent/circuit_breaker.py` | Circuit breaker pattern |
 | `app/queue/jobs.py` | Job model and priorities |
 | `app/queue/dispatcher.py` | Job queue dispatcher |
 | `app/queue/workers.py` | Worker pool |
