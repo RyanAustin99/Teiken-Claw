@@ -28,22 +28,37 @@ Teiken Claw follows a modular architecture with clear separation of concerns:
 - **Sub-Agents**: Hierarchical agent spawning
 - **Observability**: Health checks, audit logging, and admin APIs
 
-## Quick Start
+## Quick Start (Windows)
 
 ### Prerequisites
 
-- Python 3.11+
-- Ollama (for AI capabilities)
+- Python 3.11+ (download from python.org)
+- Ollama (for AI capabilities) - download from ollama.ai
 - Telegram Bot Token
 - Windows 10/11
 
-### Installation
+### Installation (PowerShell)
 
 1. Clone the repository
-2. Install dependencies: `pip install -r requirements.txt`
-3. Copy `.env.example` to `.env` and configure
-4. Run setup: `python scripts/setup.py`
-5. Start development: `python scripts/run_dev.py`
+2. Run the setup script:
+   ```powershell
+   .\scripts\setup.ps1
+   ```
+3. Edit `.env` and configure your settings
+4. Start development:
+   ```powershell
+   .\scripts\run_dev.ps1
+   ```
+
+### Common Tasks
+
+| Task | Command |
+|------|---------|
+| Run smoke tests | `.\scripts\smoke_test.ps1` |
+| Create backup | `.\scripts\backup.ps1` |
+| Install as service | `.\scripts\install_service.ps1` |
+| Reset database | `.\scripts\reset_db.ps1 -Force` |
+| Uninstall service | `.\scripts\install_service.ps1 -Uninstall` |
 
 ## Documentation
 
