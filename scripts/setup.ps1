@@ -217,34 +217,35 @@ if (-not (Test-Path $AlembicIni)) {
         }
     }
     
-    # Run alembic and capture output - use temp file for stderr to avoid truncation
-    $TempErrFile = [System.IO.Path]::GetTempFileName()
+    # Run alembic - don't treat stderr output as errors (alembic logs to stderr)
+    $TempOutFile = [System.IO.Path]::GetTempFileName()
     try {
-        # Run alembic, redirecting stderr to temp file
-        & $PythonVenv -m alembic upgrade head 2>$TempErrFile | Out-Null
+        # Run alembic and capture all output
+        & $PythonVenv -m alembic upgrade head 2>&1 | Out-File -FilePath $TempOutFile
         $AlembicExitCode = $LASTEXITCODE
         
-        # Read stderr output
-        $ErrOutput = Get-Content $TempErrFile -Raw -ErrorAction SilentlyContinue
+        # Read output
+        $AlembicOutput = Get-Content $TempOutFile -Raw -ErrorAction SilentlyContinue
         
-        # Display any error output
-        if ($ErrOutput) {
-            Write-Info "Alembic stderr: $ErrOutput"
-        }
+        # Check for actual errors (Traceback) vs just warnings/info
+        $HasError = $AlembicOutput -match "Traceback|Error|Exception"
         
-        if ($AlembicExitCode -ne 0) {
+        if ($HasError) {
+            Write-Warn "Alembic output: $AlembicOutput"
+            Write-Warn "Database migration failed"
+        } elseif ($AlembicExitCode -ne 0) {
+            Write-Info "Alembic output: $AlembicOutput"
             Write-Warn "Database migration had issues (exit code: $AlembicExitCode)"
-            if ($ErrOutput) {
-                Write-Warn "Error details: $ErrOutput"
-            }
             Write-Warn "This may be normal for first run or if tables already exist"
         } else {
             Write-Success "Database initialized"
         }
+    } catch {
+        Write-Warn "Alembic error: $_"
     } finally {
         # Clean up temp file
-        if (Test-Path $TempErrFile) {
-            Remove-Item $TempErrFile -Force -ErrorAction SilentlyContinue
+        if (Test-Path $TempOutFile) {
+            Remove-Item $TempOutFile -Force -ErrorAction SilentlyContinue
         }
     }
 }
