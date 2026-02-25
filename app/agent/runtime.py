@@ -751,6 +751,9 @@ class AgentRuntime:
         """
         Trigger memory extraction pipeline for conversation.
         
+        Uses both deterministic rules and LLM-based extraction,
+        with deduplication before storing.
+        
         Args:
             session_id: Session ID
             thread_id: Thread ID
@@ -770,23 +773,59 @@ class AgentRuntime:
             # Classify and filter candidates
             classified = extraction_rules.classify_candidates(candidates)
             
-            # Store high-confidence memories
-            for candidate in classified:
+            # Also try LLM-based extraction
+            llm_candidates = await self._llm_memory_extraction(
+                conversation=conversation,
+                session_id=session_id,
+            )
+            
+            # Merge candidates from both sources
+            all_candidates = classified + llm_candidates
+            
+            # Store high-confidence memories with deduplication
+            for candidate in all_candidates:
                 if candidate.get("confidence", 0) >= settings.AUTO_MEMORY_CONFIDENCE_THRESHOLD:
+                    content = candidate.get("content", "")
+                    
+                    if not content.strip():
+                        continue
+                    
+                    # Check for duplicates
+                    is_dup, dup_memory, _ = await self._check_memory_duplicate(
+                        content=content,
+                        scope=session_id,
+                    )
+                    
+                    if is_dup and dup_memory:
+                        logger.debug(
+                            f"Skipping duplicate memory",
+                            extra={
+                                "event": "memory_duplicate_skipped",
+                                "content_hash": hash(content),
+                                "existing_id": dup_memory.id,
+                            }
+                        )
+                        continue
+                    
+                    # Create memory (embedding will be generated automatically)
                     await memory_store.create_memory(
-                        memory_type=candidate.get("category", "note"),
-                        content=candidate.get("content", ""),
+                        memory_type=candidate.get("memory_type") or candidate.get("category", "note"),
+                        content=content,
                         tags=candidate.get("tags", []),
                         scope=session_id,
                         confidence=candidate.get("confidence", 0.5),
-                        metadata={"thread_id": thread_id, "source": "auto_extraction"}
+                        metadata={
+                            "thread_id": thread_id, 
+                            "source": "auto_extraction",
+                            "extraction_method": candidate.get("extraction_method", "rules"),
+                        }
                     )
                     
                     logger.debug(
                         f"Created memory from extraction",
                         extra={
                             "event": "memory_created",
-                            "memory_type": candidate.get("category"),
+                            "memory_type": candidate.get("memory_type") or candidate.get("category"),
                             "confidence": candidate.get("confidence"),
                         }
                     )
@@ -795,6 +834,82 @@ class AgentRuntime:
                 f"Memory extraction failed: {e}",
                 extra={"event": "memory_extraction_failed", "session_id": session_id}
             )
+    
+    async def _llm_memory_extraction(
+        self,
+        conversation: str,
+        session_id: str,
+    ) -> List[Dict[str, Any]]:
+        """
+        Use LLM to extract memories from conversation.
+        
+        Args:
+            conversation: The conversation text
+            session_id: Session ID for context
+            
+        Returns:
+            List of memory candidate dictionaries
+        """
+        try:
+            from app.memory.extractor_llm import get_llm_extractor
+            
+            extractor = get_llm_extractor()
+            
+            if not extractor.is_enabled:
+                return []
+            
+            # Extract memory using LLM
+            result = extractor.extract_memory(
+                content=conversation,
+                context={"session_id": session_id},
+            )
+            
+            if result.get("memory_type"):
+                return [{
+                    "memory_type": result["memory_type"],
+                    "content": result["content"],
+                    "tags": result.get("tags", []),
+                    "confidence": result.get("confidence", 0.5),
+                    "extraction_method": "llm",
+                }]
+            
+            return []
+            
+        except Exception as e:
+            logger.debug(f"LLM memory extraction failed: {e}")
+            return []
+    
+    async def _check_memory_duplicate(
+        self,
+        content: str,
+        scope: str,
+    ) -> Tuple[bool, Optional[Any], Optional[float]]:
+        """
+        Check if a memory is a duplicate.
+        
+        Args:
+            content: Memory content to check
+            scope: Memory scope
+            
+        Returns:
+            Tuple of (is_duplicate, existing_memory, similarity_score)
+        """
+        try:
+            from app.memory.dedupe import get_deduplicator
+            
+            deduplicator = get_deduplicator()
+            
+            is_dup, dup_memory, score = deduplicator.check_and_dedupe(
+                content=content,
+                scope=scope,
+                auto_mark=False,
+            )
+            
+            return (is_dup, dup_memory, score)
+            
+        except Exception as e:
+            logger.debug(f"Duplicate check failed: {e}")
+            return (False, None, None)
 
 
 # Global runtime instance

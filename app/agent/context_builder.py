@@ -174,6 +174,61 @@ class ContextBuilder:
         except (ValueError, TypeError):
             return None
     
+    def _get_relevant_memories(
+        self, 
+        session_id: str, 
+        query: Optional[str] = None
+    ) -> List[Dict]:
+        """
+        Get relevant memories from memory system.
+        
+        Uses hybrid retrieval to find memories relevant to the current context.
+        
+        Args:
+            session_id: Session ID for context
+            query: Optional query for semantic search
+            
+        Returns:
+            List of memory dictionaries
+        """
+        try:
+            # Use hybrid retrieval if available
+            from app.memory.retrieval import get_retriever
+            retriever = get_retriever()
+            
+            # Build query from recent context if not provided
+            if not query:
+                # Get recent messages to build context
+                recent = self._memory_store.get_recent_messages(limit=5, chat_id=session_id)
+                if recent:
+                    query = " ".join([m.content for m in recent if m.content])
+            
+            if query:
+                # Use hybrid retrieval
+                results = retriever.retrieve(
+                    query=query,
+                    scope="user",
+                    limit=5,
+                )
+                
+                return [
+                    {
+                        "content": r["content"],
+                        "type": r["memory_type"],
+                        "confidence": r["confidence"],
+                        "score": r["combined_score"],
+                    }
+                    for r in results
+                ]
+            
+            # Fallback to recent memories
+            memories = self._memory_store.list_memories(limit=5)
+            return [{"content": m.content, "type": m.memory_type} for m in memories]
+            
+        except Exception as e:
+            logger.debug(f"Failed to get relevant memories: {e}")
+            return []
+    
     def _estimate_tokens(self, text: str) -> int:
         """
         Estimate token count for text.

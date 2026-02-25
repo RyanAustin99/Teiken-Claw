@@ -79,13 +79,16 @@ app/
 │   ├── policies.py       # Tool policies
 │   ├── validators.py     # Argument validation
 │   └── mock_tools.py     # Mock tools for development
-├── memory/               # Memory system (Phase 6)
+├── memory/               # Memory system (Phase 6-7)
 │   ├── __init__.py       # Package exports
 │   ├── models.py         # Memory database models
 │   ├── store.py          # Memory CRUD operations
 │   ├── thread_state.py   # Thread tracking
 │   ├── extraction_rules.py # Deterministic extraction
 │   ├── extractor_llm.py  # LLM extractor (Phase 7)
+│   ├── dedupe.py         # Memory deduplication (Phase 7)
+│   ├── embeddings.py     # Embedding service (Phase 7)
+│   ├── retrieval.py      # Hybrid retrieval (Phase 7)
 │   └── review.py         # Memory review commands
 ├── observability/        # Monitoring and metrics
 │   └── __init__.py
@@ -166,7 +169,9 @@ tests/
 ├── test_agent_runtime.py # Agent runtime tests (Phase 4)
 ├── test_tools.py        # Tool system tests (Phase 4)
 ├── test_telegram.py     # Telegram interface tests (Phase 5)
-└── test_memory.py       # Memory system tests (Phase 6)
+├── test_memory.py       # Memory system tests (Phase 6)
+├── test_embeddings.py   # Embedding service tests (Phase 7)
+└── test_retrieval.py    # Hybrid retrieval tests (Phase 7)
 ```
 
 ### `/.github` - GitHub Configuration
@@ -221,15 +226,18 @@ GitHub-specific configuration.
 
 ---
 
-## Memory System Files (Phase 6)
+## Memory System Files (Phase 6-7)
 
 | File | Purpose |
 |------|---------|
-| `app/memory/models.py` | Memory database models (Session, Thread, Memory, Audit) |
-| `app/memory/store.py` | MemoryStore for CRUD operations |
+| `app/memory/models.py` | Memory database models (Session, Thread, Memory, Audit, Embedding) |
+| `app/memory/store.py` | MemoryStore for CRUD operations with embedding support |
 | `app/memory/thread_state.py` | ThreadState for conversation tracking |
 | `app/memory/extraction_rules.py` | Deterministic extraction rules |
-| `app/memory/extractor_llm.py` | LLM-based extraction (Phase 7 placeholder) |
+| `app/memory/extractor_llm.py` | LLM-based extraction with structured output |
+| `app/memory/dedupe.py` | Memory deduplication (exact and semantic) |
+| `app/memory/embeddings.py` | Embedding service using Ollama nomic-embed-text |
+| `app/memory/retrieval.py` | Hybrid retrieval (keyword + semantic search) |
 | `app/memory/review.py` | MemoryReview for user-facing operations |
 | `app/agent/context_router.py` | Topic detection and thread routing |
 

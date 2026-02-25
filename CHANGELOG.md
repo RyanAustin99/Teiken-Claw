@@ -7,6 +7,103 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.0.0] - 2026-02-25
 
+### Added - Phase 7: LLM Memory Extraction + Embeddings + Hybrid Retrieval
+
+#### LLM Memory Extractor
+- `app/memory/extractor_llm.py` - LLM-based memory extraction
+  - LLMMemoryExtractor class for intelligent memory extraction
+  - extract_memory() method using Ollama for structured extraction
+  - ExtractedMemory schema with validation (memory_type, content, tags, confidence, scope, ttl_days, sensitive, justification)
+  - ExtractionResult schema for batch results
+  - Server-side validation: confidence threshold, category allowlist, size limits
+  - VALID_MEMORY_TYPES allowlist (preference, project, workflow, environment, schedule_pattern, fact, note)
+  - VALID_SCOPES validation (global, project, thread, user)
+  - extract_multiple() for batch extraction
+  - extract_from_conversation() for conversation analysis
+
+#### Memory Deduplication
+- `app/memory/dedupe.py` - Memory deduplication system
+  - MemoryDeduplicator class for duplicate detection
+  - hash_content() for SHA-256 content hashing
+  - check_duplicate() for exact duplicate detection
+  - find_similar() for semantic similarity detection
+  - semantic_similarity() using embeddings
+  - mark_duplicate() for soft-delete duplicates
+  - check_and_dedupe() combined check method
+  - restore_duplicate() for restoring marked duplicates
+  - cleanup_duplicates() for permanent deletion of old duplicates
+
+#### Embedding Service
+- `app/memory/embeddings.py` - Ollama embeddings integration
+  - EmbeddingService class for embedding generation
+  - embed() for single text embedding using nomic-embed-text
+  - embed_batch() for batch embedding generation
+  - store_embedding() for persisting embeddings
+  - get_embedding() for retrieving embeddings
+  - compute_similarity() for cosine similarity calculation
+  - find_nearest() for nearest neighbor search
+  - needs_re_embedding() for detecting stale embeddings
+  - re_embed() for updating embeddings
+  - re_embed_all() for model migration
+  - Model version tracking for re-embedding support
+
+#### Hybrid Retrieval System
+- `app/memory/retrieval.py` - Hybrid retrieval combining keyword and semantic search
+  - MemoryRetriever class for hybrid search
+  - retrieve() method combining FTS5 and semantic search
+  - keyword_search() for text-based search
+  - semantic_search() for embedding-based search
+  - merge_results() for combining search results
+  - rank_results() for weighted scoring
+  - retrieve_with_budget() for token-budget-aware retrieval
+  - get_relevant_memories() for context building
+  - RetrievalResult dataclass with scores
+
+#### Integration Updates
+- `app/memory/store.py` - Enhanced with embedding support
+  - create_memory() now generates and stores embeddings automatically
+  - search_memories() uses hybrid retrieval by default
+  - Fallback to keyword search on hybrid failure
+
+- `app/agent/context_builder.py` - Enhanced with retrieval integration
+  - _get_relevant_memories() uses hybrid retrieval
+  - Builds query from recent context for semantic search
+  - Returns memories with confidence and relevance scores
+
+- `app/agent/runtime.py` - Enhanced memory extraction pipeline
+  - _trigger_memory_extraction() now uses both rules and LLM extraction
+  - _llm_memory_extraction() for LLM-based extraction
+  - _check_memory_duplicate() for deduplication before storage
+  - Merged candidates from deterministic and LLM extraction
+
+- `app/main.py` - New service initialization
+  - EmbeddingService initialization on startup
+  - MemoryRetriever initialization on startup
+  - MemoryDeduplicator initialization on startup
+  - LLMMemoryExtractor initialization on startup
+
+- `app/config/settings.py` - New embedding settings
+  - EMBEDDING_MODEL (default: nomic-embed-text)
+  - EMBEDDING_DIMENSION (default: 768)
+  - RETRIEVAL_TOP_K (default: 10)
+  - SEMANTIC_SEARCH_THRESHOLD (default: 0.7)
+  - DEDUPE_SIMILARITY_THRESHOLD (default: 0.9)
+
+#### Tests
+- `tests/test_embeddings.py` - Embedding service tests
+  - Test embedding generation
+  - Test similarity computation
+  - Test nearest neighbor search
+  - Test model version tracking
+  - Test error handling
+
+- `tests/test_retrieval.py` - Retrieval system tests
+  - Test keyword search
+  - Test semantic search
+  - Test hybrid retrieval
+  - Test result ranking
+  - Test error handling
+
 ### Added - Phase 6: Memory System - Deterministic + Review First
 
 #### Memory Database Models

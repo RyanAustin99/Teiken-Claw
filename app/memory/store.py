@@ -178,9 +178,24 @@ class MemoryStore:
         tags: Optional[List[str]] = None,
         scope: str = "user",
         confidence: float = 0.0,
-        metadata: Optional[Dict] = None
+        metadata: Optional[Dict] = None,
+        generate_embedding: bool = True
     ) -> MemoryRecord:
-        """Create a new memory record."""
+        """
+        Create a new memory record.
+        
+        Args:
+            memory_type: Type of memory (preference, project, workflow, etc.)
+            content: Memory content
+            tags: Optional list of tags
+            scope: Memory scope (user, global, project, thread)
+            confidence: Confidence score (0.0-1.0)
+            metadata: Optional metadata dictionary
+            generate_embedding: Whether to generate embedding for the memory
+            
+        Returns:
+            Created MemoryRecord
+        """
         memory = MemoryRecord(
             memory_type=memory_type,
             content=content,
@@ -196,7 +211,37 @@ class MemoryStore:
         # Create audit record
         self.audit_memory(memory.id, "created", "Initial creation")
         
+        # Generate embedding if requested
+        if generate_embedding:
+            self._generate_memory_embedding(memory)
+        
         return memory
+    
+    def _generate_memory_embedding(self, memory: MemoryRecord) -> bool:
+        """Generate and store embedding for a memory record."""
+        try:
+            from app.memory.embeddings import get_embedding_service
+            embedding_service = get_embedding_service()
+            
+            # Generate embedding
+            embedding = embedding_service.embed(memory.content)
+            
+            if embedding:
+                # Store embedding
+                embedding_service.store_embedding(
+                    source_type="memory",
+                    source_id=memory.id,
+                    content=memory.content,
+                    embedding=embedding,
+                )
+                return True
+            
+        except Exception as e:
+            # Log but don't fail memory creation
+            import logging
+            logging.getLogger(__name__).warning(f"Failed to generate embedding: {e}")
+        
+        return False
     
     def get_memory(self, memory_id: int) -> Optional[MemoryRecord]:
         """Get a memory record by ID."""
@@ -290,12 +335,60 @@ class MemoryStore:
         scope: Optional[str] = None,
         memory_type: Optional[str] = None,
         tags: Optional[List[str]] = None,
-        limit: int = 50
+        limit: int = 50,
+        use_hybrid: bool = True
     ) -> List[MemoryRecord]:
-        """Search memories using full-text search."""
-        # This is a placeholder - actual FTS implementation would use SQLite FTS5
-        # For now, we'll do a simple text search
+        """
+        Search memories using hybrid retrieval.
         
+        Combines keyword search with semantic search via embeddings.
+        
+        Args:
+            query: Search query
+            scope: Optional scope filter
+            memory_type: Optional memory type filter
+            tags: Optional tags filter
+            limit: Maximum results
+            use_hybrid: Whether to use hybrid retrieval (default True)
+            
+        Returns:
+            List of matching MemoryRecord objects
+        """
+        if use_hybrid:
+            try:
+                from app.memory.retrieval import get_retriever
+                retriever = get_retriever()
+                
+                # Use hybrid retrieval
+                results = retriever.retrieve(
+                    query=query,
+                    scope=scope,
+                    memory_type=memory_type,
+                    tags=tags,
+                    limit=limit,
+                )
+                
+                # Convert to MemoryRecord objects
+                memory_ids = [r["memory_id"] for r in results]
+                if not memory_ids:
+                    return []
+                
+                # Fetch memories in order
+                memories = {
+                    m.id: m for m in 
+                    self._session.query(MemoryRecord)
+                    .filter(MemoryRecord.id.in_(memory_ids))
+                    .all()
+                }
+                
+                # Return in relevance order
+                return [memories[mid] for mid in memory_ids if mid in memories]
+                
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"Hybrid search failed, falling back to keyword: {e}")
+        
+        # Fallback to keyword search
         search_query = f"%{query}%"
         
         base_query = self._session.query(MemoryRecord)

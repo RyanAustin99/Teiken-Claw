@@ -70,6 +70,12 @@ from app.memory.thread_state import ThreadState, get_thread_state, set_thread_st
 from app.memory.extraction_rules import MemoryExtractionRules, get_extraction_rules, set_extraction_rules
 from app.agent.context_router import ContextRouter, get_context_router, set_context_router
 
+# Phase 7: Memory embeddings and retrieval imports
+from app.memory.embeddings import EmbeddingService, get_embedding_service, set_embedding_service
+from app.memory.retrieval import MemoryRetriever, get_retriever, set_retriever
+from app.memory.dedupe import MemoryDeduplicator, get_deduplicator, set_deduplicator
+from app.memory.extractor_llm import LLMMemoryExtractor, get_llm_extractor, set_llm_extractor
+
 
 # Configure logging before app creation
 setup_logging()
@@ -99,6 +105,12 @@ _thread_state: ThreadState = None
 _extraction_rules: MemoryExtractionRules = None
 _context_router: ContextRouter = None
 
+# Phase 7: Global embedding and retrieval components
+_embedding_service: EmbeddingService = None
+_memory_retriever: MemoryRetriever = None
+_memory_deduplicator: MemoryDeduplicator = None
+_llm_extractor: LLMMemoryExtractor = None
+
 
 async def _initialize_queue_system() -> dict:
     """
@@ -127,6 +139,7 @@ async def _initialize_queue_system() -> dict:
     global _tool_registry, _agent_runtime
     global _telegram_bot, _telegram_sender, _command_router
     global _memory_store, _thread_state, _extraction_rules, _context_router
+    global _embedding_service, _memory_retriever, _memory_deduplicator, _llm_extractor
     
     status = {}
     
@@ -221,7 +234,31 @@ async def _initialize_queue_system() -> dict:
         set_context_router(_context_router)
         status["context_router"] = "initialized"
         
-        # 12. Initialize Worker Pool
+        # 12. Initialize Embedding Service (Phase 7)
+        logger.info("Initializing embedding service...")
+        _embedding_service = get_embedding_service()
+        set_embedding_service(_embedding_service)
+        status["embedding_service"] = "initialized"
+        
+        # 13. Initialize Memory Retriever (Phase 7)
+        logger.info("Initializing memory retriever...")
+        _memory_retriever = get_retriever()
+        set_retriever(_memory_retriever)
+        status["memory_retriever"] = "initialized"
+        
+        # 14. Initialize Memory Deduplicator (Phase 7)
+        logger.info("Initializing memory deduplicator...")
+        _memory_deduplicator = get_deduplicator()
+        set_deduplicator(_memory_deduplicator)
+        status["memory_deduplicator"] = "initialized"
+        
+        # 15. Initialize LLM Memory Extractor (Phase 7)
+        logger.info("Initializing LLM memory extractor...")
+        _llm_extractor = get_llm_extractor()
+        set_llm_extractor(_llm_extractor)
+        status["llm_extractor"] = "initialized"
+        
+        # 16. Initialize Worker Pool
         logger.info("Initializing worker pool...")
         _worker_pool = WorkerPool(
             dispatcher=_dispatcher,

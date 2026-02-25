@@ -99,6 +99,13 @@ class Settings(BaseSettings):
     MEMORY_TYPE: str = "sqlite"
     MEMORY_URL: str = "sqlite:///./data/memory.db"
     
+    # Embedding Configuration
+    EMBEDDING_MODEL: str = "nomic-embed-text"
+    EMBEDDING_DIMENSION: int = 768
+    RETRIEVAL_TOP_K: int = 10
+    SEMANTIC_SEARCH_THRESHOLD: float = 0.7
+    DEDUPE_SIMILARITY_THRESHOLD: float = 0.9
+    
     # =========================================================================
     # Queue Configuration
     # =========================================================================
