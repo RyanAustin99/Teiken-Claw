@@ -64,6 +64,12 @@ from app.interfaces import (
     set_telegram_sender,
 )
 
+# Memory system imports
+from app.memory.store import MemoryStore, get_memory_store, set_memory_store
+from app.memory.thread_state import ThreadState, get_thread_state, set_thread_state
+from app.memory.extraction_rules import MemoryExtractionRules, get_extraction_rules, set_extraction_rules
+from app.agent.context_router import ContextRouter, get_context_router, set_context_router
+
 
 # Configure logging before app creation
 setup_logging()
@@ -87,6 +93,12 @@ _telegram_bot: TelegramBot = None
 _telegram_sender: TelegramSender = None
 _command_router: CommandRouter = None
 
+# Global memory components
+_memory_store: MemoryStore = None
+_thread_state: ThreadState = None
+_extraction_rules: MemoryExtractionRules = None
+_context_router: ContextRouter = None
+
 
 async def _initialize_queue_system() -> dict:
     """
@@ -98,9 +110,13 @@ async def _initialize_queue_system() -> dict:
     - JobDispatcher
     - RateLimiter
     - OutboundQueue
-    - WorkerPool
     - ToolRegistry
     - AgentRuntime
+    - MemoryStore
+    - ThreadState
+    - MemoryExtractionRules
+    - ContextRouter
+    - WorkerPool
     - TelegramSender
     - TelegramBot (if enabled)
     
@@ -110,6 +126,7 @@ async def _initialize_queue_system() -> dict:
     global _dispatcher, _lock_manager, _dead_letter_queue, _worker_pool, _rate_limiter, _outbound_queue
     global _tool_registry, _agent_runtime
     global _telegram_bot, _telegram_sender, _command_router
+    global _memory_store, _thread_state, _extraction_rules, _context_router
     
     status = {}
     
@@ -180,7 +197,31 @@ async def _initialize_queue_system() -> dict:
         set_agent_runtime(_agent_runtime)
         status["agent_runtime"] = "initialized"
         
-        # 8. Initialize Worker Pool
+        # 8. Initialize Memory Store
+        logger.info("Initializing memory store...")
+        _memory_store = get_memory_store()
+        set_memory_store(_memory_store)
+        status["memory_store"] = "initialized"
+        
+        # 9. Initialize Thread State
+        logger.info("Initializing thread state...")
+        _thread_state = get_thread_state()
+        set_thread_state(_thread_state)
+        status["thread_state"] = "initialized"
+        
+        # 10. Initialize Extraction Rules
+        logger.info("Initializing extraction rules...")
+        _extraction_rules = get_extraction_rules()
+        set_extraction_rules(_extraction_rules)
+        status["extraction_rules"] = "initialized"
+        
+        # 11. Initialize Context Router
+        logger.info("Initializing context router...")
+        _context_router = get_context_router()
+        set_context_router(_context_router)
+        status["context_router"] = "initialized"
+        
+        # 12. Initialize Worker Pool
         logger.info("Initializing worker pool...")
         _worker_pool = WorkerPool(
             dispatcher=_dispatcher,
@@ -192,12 +233,12 @@ async def _initialize_queue_system() -> dict:
         set_worker_pool(_worker_pool)
         status["worker_pool"] = "initialized"
         
-        # 9. Initialize Command Router
+        # 13. Initialize Command Router
         logger.info("Initializing command router...")
         _command_router = CommandRouter()
         status["command_router"] = "initialized"
         
-        # 10. Initialize Telegram Sender
+        # 14. Initialize Telegram Sender
         logger.info("Initializing Telegram sender...")
         _telegram_sender = TelegramSender(
             token=settings.TELEGRAM_BOT_TOKEN,
@@ -206,7 +247,7 @@ async def _initialize_queue_system() -> dict:
         set_telegram_sender(_telegram_sender)
         status["telegram_sender"] = "initialized"
         
-        # 11. Initialize Telegram Bot (if enabled)
+        # 15. Initialize Telegram Bot (if enabled)
         if settings.ENABLE_TELEGRAM and HAS_TELEGRAM and settings.TELEGRAM_BOT_TOKEN:
             logger.info("Initializing Telegram bot...")
             _telegram_bot = TelegramBot(

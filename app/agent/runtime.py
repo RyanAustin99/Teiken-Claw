@@ -38,6 +38,12 @@ from app.queue.jobs import Job
 from app.tools.base import ToolResult
 from app.tools.registry import ToolRegistry, get_tool_registry
 
+# Memory system imports
+from app.memory.store import get_memory_store
+from app.memory.thread_state import get_thread_state
+from app.memory.extraction_rules import get_extraction_rules
+from app.agent.context_router import get_context_router
+
 logger = get_logger(__name__)
 
 
@@ -163,6 +169,9 @@ class AgentRuntime:
         # Track tool calls for duplicate detection
         tool_call_history: List[ToolCallRecord] = []
         
+        # Persist user message to memory
+        await self._persist_user_message(job)
+        
         # Build initial context
         messages = await self._build_initial_context(job)
         
@@ -192,6 +201,26 @@ class AgentRuntime:
                 if not tool_calls:
                     # Final response - we're done
                     final_content = response.message.content or ""
+                    
+                    # Persist assistant message
+                    await self._persist_assistant_message(
+                        job=job,
+                        response=final_content,
+                        tool_calls=len(tool_call_history)
+                    )
+                    
+                    # Trigger memory extraction
+                    user_message = job.payload.get("text", "") or job.payload.get("message", "")
+                    session_id = job.session_id or f"chat:{job.chat_id}"
+                    thread_id = job.thread_id or await self._get_thread_id(job)
+                    
+                    if settings.AUTO_MEMORY_ENABLED and thread_id:
+                        await self._trigger_memory_extraction(
+                            session_id=session_id,
+                            thread_id=thread_id,
+                            user_message=user_message,
+                            assistant_message=final_content
+                        )
                     
                     logger.info(
                         f"Agent run completed: {job.job_id}",
@@ -589,6 +618,183 @@ class AgentRuntime:
                 "error_code": result.error_code,
             }
         )
+    
+    async def _persist_user_message(self, job: Job) -> None:
+        """
+        Persist user message to memory store.
+        
+        Args:
+            job: Job containing the user message
+        """
+        try:
+            memory_store = get_memory_store()
+            thread_state = get_thread_state()
+            
+            # Get or create session/thread
+            session_id = job.session_id or f"chat:{job.chat_id}"
+            thread_id = job.thread_id
+            
+            if not thread_id:
+                # Get current thread for session
+                thread_id = await thread_state.get_current_thread(session_id)
+            
+            if not thread_id:
+                # Create new thread
+                thread_id = await thread_state.create_new_thread(
+                    session_id=session_id,
+                    metadata={"source": job.source, "chat_id": job.chat_id}
+                )
+            
+            # Get user message
+            user_message = job.payload.get("text", "") or job.payload.get("message", "")
+            
+            # Append message to thread
+            await memory_store.append_message(
+                session_id=session_id,
+                thread_id=thread_id,
+                role="user",
+                content=user_message,
+                metadata={"job_id": job.job_id, "source": job.source}
+            )
+            
+            logger.debug(
+                f"Persisted user message for job: {job.job_id}",
+                extra={
+                    "event": "user_message_persisted",
+                    "job_id": job.job_id,
+                    "session_id": session_id,
+                    "thread_id": thread_id,
+                }
+            )
+        except Exception as e:
+            # Don't fail the job if persistence fails
+            logger.warning(
+                f"Failed to persist user message: {e}",
+                extra={"event": "user_message_persist_failed", "job_id": job.job_id}
+            )
+    
+    async def _persist_assistant_message(
+        self,
+        job: Job,
+        response: str,
+        tool_calls: int = 0
+    ) -> None:
+        """
+        Persist assistant response to memory store.
+        
+        Args:
+            job: Job containing context
+            response: Assistant response text
+            tool_calls: Number of tool calls made
+        """
+        try:
+            memory_store = get_memory_store()
+            thread_state = get_thread_state()
+            
+            session_id = job.session_id or f"chat:{job.chat_id}"
+            thread_id = job.thread_id or await thread_state.get_current_thread(session_id)
+            
+            if thread_id:
+                await memory_store.append_message(
+                    session_id=session_id,
+                    thread_id=thread_id,
+                    role="assistant",
+                    content=response,
+                    metadata={
+                        "job_id": job.job_id,
+                        "tool_calls": tool_calls,
+                    }
+                )
+                
+                logger.debug(
+                    f"Persisted assistant message for job: {job.job_id}",
+                    extra={
+                        "event": "assistant_message_persisted",
+                        "job_id": job.job_id,
+                        "thread_id": thread_id,
+                    }
+                )
+        except Exception as e:
+            logger.warning(
+                f"Failed to persist assistant message: {e}",
+                extra={"event": "assistant_message_persist_failed", "job_id": job.job_id}
+            )
+    
+    async def _get_thread_id(self, job: Job) -> Optional[str]:
+        """
+        Get thread ID for a job.
+        
+        Args:
+            job: Job to get thread ID for
+            
+        Returns:
+            Thread ID or None
+        """
+        try:
+            thread_state = get_thread_state()
+            session_id = job.session_id or f"chat:{job.chat_id}"
+            
+            if job.thread_id:
+                return job.thread_id
+            
+            return await thread_state.get_current_thread(session_id)
+        except Exception:
+            return None
+    
+    async def _trigger_memory_extraction(
+        self,
+        session_id: str,
+        thread_id: str,
+        user_message: str,
+        assistant_message: str
+    ) -> None:
+        """
+        Trigger memory extraction pipeline for conversation.
+        
+        Args:
+            session_id: Session ID
+            thread_id: Thread ID
+            user_message: User's message
+            assistant_message: Assistant's response
+        """
+        try:
+            extraction_rules = get_extraction_rules()
+            memory_store = get_memory_store()
+            
+            # Combine conversation for analysis
+            conversation = f"User: {user_message}\nAssistant: {assistant_message}"
+            
+            # Extract candidates using deterministic rules
+            candidates = extraction_rules.extract_facts(conversation)
+            
+            # Classify and filter candidates
+            classified = extraction_rules.classify_candidates(candidates)
+            
+            # Store high-confidence memories
+            for candidate in classified:
+                if candidate.get("confidence", 0) >= settings.AUTO_MEMORY_CONFIDENCE_THRESHOLD:
+                    await memory_store.create_memory(
+                        memory_type=candidate.get("category", "note"),
+                        content=candidate.get("content", ""),
+                        tags=candidate.get("tags", []),
+                        scope=session_id,
+                        confidence=candidate.get("confidence", 0.5),
+                        metadata={"thread_id": thread_id, "source": "auto_extraction"}
+                    )
+                    
+                    logger.debug(
+                        f"Created memory from extraction",
+                        extra={
+                            "event": "memory_created",
+                            "memory_type": candidate.get("category"),
+                            "confidence": candidate.get("confidence"),
+                        }
+                    )
+        except Exception as e:
+            logger.warning(
+                f"Memory extraction failed: {e}",
+                extra={"event": "memory_extraction_failed", "session_id": session_id}
+            )
 
 
 # Global runtime instance

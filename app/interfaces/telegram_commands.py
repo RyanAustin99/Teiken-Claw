@@ -373,7 +373,7 @@ class CommandRouter:
         return f"❌ Unknown subcommand: {subcommand}"
     
     # =========================================================================
-    # Memory Commands (Stubs for Phase 6)
+    # Memory Commands
     # =========================================================================
     
     async def handle_memory(
@@ -385,61 +385,201 @@ class CommandRouter:
         """
         Handle /memory command.
         
-        These are stubs for Phase 6 implementation.
-        
         Args:
             chat_id: Telegram chat ID
             user_id: Telegram user ID
             args: Command arguments
         
         Returns:
-            str: Memory info or stub message
+            str: Memory info or action result
         """
         if not args:
             return (
                 "🧠 *Memory Commands*\n\n"
                 "/memory review \\- List recent memories\n"
                 "/memory search \\<query\\> \\- Search memories\n"
+                "/memory forget \\<id\\> \\- Delete a memory\n"
+                "/memory edit \\<id\\> \\<text\\> \\- Edit a memory\n"
                 "/memory pause \\- Pause auto\\-memory\n"
-                "/memory resume \\- Resume auto\\-memory"
+                "/memory resume \\- Resume auto\\-memory\n"
+                "/memory policy \\- Show memory policy"
             )
         
         subcommand = args[0].lower()
         
         if subcommand == "review":
-            return (
-                "🧠 *Recent Memories*\n\n"
-                "⚠️ Memory system not yet implemented\\. "
-                "This feature will be available in Phase 6\\."
-            )
+            return await self._handle_memory_review(chat_id, args[1:])
         
         if subcommand == "search":
             query = " ".join(args[1:]) if len(args) > 1 else ""
             if not query:
                 return "❌ Please provide a search query\\."
-            
-            return (
-                f"🧠 *Memory Search*\n\n"
-                f"Query: {query}\n\n"
-                f"⚠️ Memory search not yet implemented\\. "
-                f"This feature will be available in Phase 6\\."
-            )
+            return await self._handle_memory_search(chat_id, query)
+        
+        if subcommand == "forget":
+            memory_id = args[1] if len(args) > 1 else ""
+            if not memory_id:
+                return "❌ Please provide a memory ID to forget\\."
+            return await self._handle_memory_forget(chat_id, memory_id)
+        
+        if subcommand == "edit":
+            if len(args) < 3:
+                return "❌ Usage: /memory edit \\<id\\> \\<new text\\>"
+            memory_id = args[1]
+            new_text = " ".join(args[2:])
+            return await self._handle_memory_edit(chat_id, memory_id, new_text)
         
         if subcommand == "pause":
-            return (
-                "⏸️ *Memory Paused*\n\n"
-                "⚠️ Memory system not yet implemented\\. "
-                "This feature will be available in Phase 6\\."
-            )
+            return await self._handle_memory_pause(chat_id)
         
         if subcommand == "resume":
-            return (
-                "▶️ *Memory Resumed*\n\n"
-                "⚠️ Memory system not yet implemented\\. "
-                "This feature will be available in Phase 6\\."
-            )
+            return await self._handle_memory_resume(chat_id)
+        
+        if subcommand == "policy":
+            return await self._handle_memory_policy(chat_id)
         
         return f"❌ Unknown subcommand: {subcommand}"
+    
+    async def _handle_memory_review(self, chat_id: int, args: List[str]) -> str:
+        """Handle memory review subcommand."""
+        try:
+            from app.memory.review import get_memory_review
+            review = get_memory_review()
+            
+            # Parse optional limit
+            limit = 10
+            if args and args[0].isdigit():
+                limit = int(args[0])
+            
+            memories = await review.list_memories(
+                scope=f"chat:{chat_id}",
+                limit=limit
+            )
+            
+            if not memories:
+                return "🧠 *Recent Memories*\n\nNo memories found\\."
+            
+            lines = ["🧠 *Recent Memories*\n"]
+            for mem in memories[:10]:
+                memory_id = mem.get("id", "?")[:8]
+                content = mem.get("content", "")[:50].replace("_", "\\_").replace("*", "\\*")
+                mem_type = mem.get("memory_type", "unknown")
+                lines.append(f"• `[{memory_id}]` \\({mem_type}\\) {content}")
+            
+            if len(memories) > 10:
+                lines.append(f"\n_\\.\\.\\. and {len(memories) - 10} more_")
+            
+            return "\n".join(lines)
+        except Exception as e:
+            logger.error(f"Memory review error: {e}", extra={"event": "memory_review_error"})
+            return f"❌ Error listing memories: {str(e)[:50]}"
+    
+    async def _handle_memory_search(self, chat_id: int, query: str) -> str:
+        """Handle memory search subcommand."""
+        try:
+            from app.memory.review import get_memory_review
+            review = get_memory_review()
+            
+            results = await review.search_memories(
+                query=query,
+                scope=f"chat:{chat_id}",
+                limit=5
+            )
+            
+            if not results:
+                return f"🧠 *Memory Search*\n\nNo results for: {query}"
+            
+            lines = [f"🧠 *Memory Search*\n\nQuery: {query}\n"]
+            for mem in results[:5]:
+                memory_id = mem.get("id", "?")[:8]
+                content = mem.get("content", "")[:80].replace("_", "\\_").replace("*", "\\*")
+                lines.append(f"• `[{memory_id}]` {content}")
+            
+            return "\n".join(lines)
+        except Exception as e:
+            logger.error(f"Memory search error: {e}", extra={"event": "memory_search_error"})
+            return f"❌ Error searching memories: {str(e)[:50]}"
+    
+    async def _handle_memory_forget(self, chat_id: int, memory_id: str) -> str:
+        """Handle memory forget subcommand."""
+        try:
+            from app.memory.review import get_memory_review
+            review = get_memory_review()
+            
+            success = await review.delete_memory(
+                memory_id=memory_id,
+                reason=f"User requested deletion via /memory forget"
+            )
+            
+            if success:
+                return f"🗑️ Memory `{memory_id}` has been forgotten\\."
+            return f"❌ Memory `{memory_id}` not found\\."
+        except Exception as e:
+            logger.error(f"Memory forget error: {e}", extra={"event": "memory_forget_error"})
+            return f"❌ Error forgetting memory: {str(e)[:50]}"
+    
+    async def _handle_memory_edit(self, chat_id: int, memory_id: str, new_text: str) -> str:
+        """Handle memory edit subcommand."""
+        try:
+            from app.memory.review import get_memory_review
+            review = get_memory_review()
+            
+            success = await review.edit_memory(
+                memory_id=memory_id,
+                updates={"content": new_text}
+            )
+            
+            if success:
+                return f"✏️ Memory `{memory_id}` has been updated\\."
+            return f"❌ Memory `{memory_id}` not found\\."
+        except Exception as e:
+            logger.error(f"Memory edit error: {e}", extra={"event": "memory_edit_error"})
+            return f"❌ Error editing memory: {str(e)[:50]}"
+    
+    async def _handle_memory_pause(self, chat_id: int) -> str:
+        """Handle memory pause subcommand."""
+        try:
+            from app.memory.review import get_memory_review
+            review = get_memory_review()
+            
+            await review.pause_auto_memory()
+            return "⏸️ Auto\\-memory has been paused\\. New memories will not be automatically created\\."
+        except Exception as e:
+            logger.error(f"Memory pause error: {e}", extra={"event": "memory_pause_error"})
+            return f"❌ Error pausing memory: {str(e)[:50]}"
+    
+    async def _handle_memory_resume(self, chat_id: int) -> str:
+        """Handle memory resume subcommand."""
+        try:
+            from app.memory.review import get_memory_review
+            review = get_memory_review()
+            
+            await review.resume_auto_memory()
+            return "▶️ Auto\\-memory has been resumed\\. New memories will be automatically created\\."
+        except Exception as e:
+            logger.error(f"Memory resume error: {e}", extra={"event": "memory_resume_error"})
+            return f"❌ Error resuming memory: {str(e)[:50]}"
+    
+    async def _handle_memory_policy(self, chat_id: int) -> str:
+        """Handle memory policy subcommand."""
+        return (
+            "🧠 *Memory Policy*\n\n"
+            "*What is stored:*\n"
+            "• Preferences \\(themes, formats, workflows\\)\n"
+            "• Project context \\(names, goals, tech\\)\n"
+            "• Workflow patterns \\(recurring tasks\\)\n"
+            "• Environment details \\(timezones, paths\\)\n"
+            "• Factual notes \\(API keys locations, etc\\)\n\n"
+            "*What is NOT stored:*\n"
+            "• Transient content \\(temporary values\\)\n"
+            "• Sensitive data \\(passwords, secrets\\)\n"
+            "• Noisy content \\(greetings, small talk\\)\n\n"
+            "*Your controls:*\n"
+            "• /memory review \\- See stored memories\n"
+            "• /memory forget \\- Delete any memory\n"
+            "• /memory pause \\- Stop auto\\-memory\n"
+            "• All deletions are audited"
+        )
     
     # =========================================================================
     # Scheduler Commands (Stubs for Phase 9)

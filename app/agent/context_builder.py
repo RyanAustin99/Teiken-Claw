@@ -16,6 +16,8 @@ from typing import Any, Dict, List, Optional
 
 from app.agent.prompts import build_system_prompt, build_tool_prompt
 from app.config.settings import settings
+from app.memory.thread_state import ThreadState
+from app.memory.store import MemoryStore
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +36,8 @@ class ContextBuilder:
     - Mode configuration
     - Recent message history
     - Tool definitions
+    - Thread context (from memory system)
+    - Relevant memories (from memory system)
     
     Attributes:
         max_tokens: Maximum tokens for context
@@ -55,6 +59,8 @@ class ContextBuilder:
         self.max_tokens = max_tokens
         self.reserved_tokens = reserved_tokens
         self._available_tokens = max_tokens - reserved_tokens
+        self._thread_state = ThreadState()
+        self._memory_store = MemoryStore()
         
         logger.debug(
             f"ContextBuilder initialized: max_tokens={max_tokens}, "
@@ -102,7 +108,44 @@ class ContextBuilder:
         })
         estimated_tokens += self._estimate_tokens(system_prompt)
         
-        # 2. Add recent messages (placeholder - just use provided messages)
+        # 2. Add thread context if thread_id provided
+        if thread_id:
+            thread_context = self._get_thread_context(thread_id)
+            if thread_context:
+                # Add thread summary as system message
+                if thread_context.get("summary"):
+                    messages.append({
+                        "role": "system",
+                        "content": f"Thread Summary: {thread_context['summary']}",
+                    })
+                    estimated_tokens += self._estimate_tokens(thread_context["summary"])
+                
+                # Add recent messages from thread
+                thread_messages = thread_context.get("messages", [])
+                if thread_messages:
+                    # Truncate if needed to fit budget
+                    available_for_messages = self._available_tokens - estimated_tokens
+                    truncated_messages = self._truncate_messages(
+                        thread_messages,
+                        available_for_messages,
+                    )
+                    messages.extend(truncated_messages)
+        
+        # 3. Add relevant memories
+        if session_id:
+            relevant_memories = self._get_relevant_memories(session_id)
+            if relevant_memories:
+                memory_content = "\n\n".join([
+                    f"Memory: {memory['content']}" 
+                    for memory in relevant_memories
+                ])
+                messages.append({
+                    "role": "system",
+                    "content": memory_content,
+                })
+                estimated_tokens += self._estimate_tokens(memory_content)
+        
+        # 4. Add recent messages (placeholder - just use provided messages)
         if recent_messages:
             # Truncate if needed to fit budget
             available_for_messages = self._available_tokens - estimated_tokens
@@ -122,6 +165,14 @@ class ContextBuilder:
         )
         
         return messages
+    
+    def _get_thread_context(self, thread_id: str) -> Optional[Dict]:
+        """Get thread context from memory system."""
+        try:
+            thread_id_int = int(thread_id)
+            return self._thread_state.get_thread_context(thread_id_int)
+        except (ValueError, TypeError):
+            return None
     
     def _estimate_tokens(self, text: str) -> int:
         """

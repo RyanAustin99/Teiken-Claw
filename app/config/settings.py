@@ -93,6 +93,9 @@ class Settings(BaseSettings):
     # =========================================================================
     
     AUTO_MEMORY_ENABLED: bool = True
+    AUTO_MEMORY_CONFIDENCE_THRESHOLD: float = 0.7
+    MAX_THREAD_MESSAGES: int = 100
+    THREAD_INACTIVITY_TIMEOUT_MIN: int = 30
     MEMORY_TYPE: str = "sqlite"
     MEMORY_URL: str = "sqlite:///./data/memory.db"
     
