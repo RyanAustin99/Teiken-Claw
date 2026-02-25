@@ -99,6 +99,8 @@ class FilesTool(Tool):
         """
         super().__init__(policy)
         self._workspace_dir = Path(workspace_dir).resolve()
+        # Backward-compatible alias expected by tests/callers.
+        self._workspace_root = self._workspace_dir
         self._max_file_size = max_file_size
         self._path_guard = PathGuard(str(self._workspace_dir))
         self._sanitizer = Sanitizer()
@@ -165,7 +167,7 @@ class FilesTool(Tool):
                         "recursive": {
                             "type": "boolean",
                             "description": "Search recursively (default: false)",
-                            "default": false
+                            "default": False
                         }
                     },
                     "required": ["action", "path"]

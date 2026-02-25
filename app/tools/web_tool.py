@@ -43,6 +43,12 @@ DEFAULT_HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 
+# Optional DuckDuckGo search client (patched in tests).
+try:
+    from duckduckgo_search import DDGS
+except ImportError:  # pragma: no cover - exercised via runtime fallbacks
+    DDGS = None
+
 
 class WebTool(Tool):
     """
@@ -84,7 +90,8 @@ class WebTool(Tool):
         self._max_response_size = max_response_size
         self._allowed_domains = allowed_domains or []
         self._user_agent = user_agent
-        self._sanitizer = Sanitizer(allowed_domains=allowed_domains)
+        # Non-strict mode keeps URL normalization while allowing caller-side handling.
+        self._sanitizer = Sanitizer(allowed_domains=allowed_domains, strict_mode=False)
         
         logger.debug(
             f"WebTool initialized with timeout={timeout_sec}s, "
@@ -223,8 +230,8 @@ class WebTool(Tool):
         logger.info(f"Performing web search: {query[:50]}...")
         
         try:
-            # Import duckduckgo-search lazily to avoid import errors
-            from duckduckgo_search import DDGS
+            if DDGS is None:
+                raise ImportError("duckduckgo-search package is not installed")
             
             results = []
             

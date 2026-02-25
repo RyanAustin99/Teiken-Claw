@@ -354,7 +354,7 @@ async def _initialize_queue_system() -> dict:
         if settings.SCHEDULER_ENABLED:
             logger.info("Initializing control state manager...")
             global _control_state_manager
-            _control_state_manager = ControlStateManager()
+            _control_state_manager = ControlStateManager(load_persisted_state=True)
             set_control_state_manager(_control_state_manager)
             status["control_state_manager"] = "initialized"
         else:
@@ -874,6 +874,7 @@ app.include_router(admin_router)
 async def root() -> dict:
     """Root endpoint returning basic app info."""
     return {
+        "message": "Teiken Claw AI Agent System",
         "name": settings.APP_NAME,
         "version": settings.APP_VERSION,
         "status": "running",

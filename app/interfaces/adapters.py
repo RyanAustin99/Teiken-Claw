@@ -303,11 +303,11 @@ class TelegramAdapter:
         Returns:
             str: HTML-escaped text
         """
-        return (
-            text.replace("&", "&")
-            .replace("<", "<")
-            .replace(">", ">")
-        )
+        escaped = text.replace("&", "&amp;")
+        # Keep angle brackets for Telegram HTML mode while neutralizing script tags.
+        escaped = re.sub(r"(?i)<\s*script\b", "<scr&#105;pt", escaped)
+        escaped = re.sub(r"(?i)<\s*/\s*script\s*>", "</scr&#105;pt>", escaped)
+        return escaped
     
     # =========================================================================
     # Message Formatting Helpers

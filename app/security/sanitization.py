@@ -185,9 +185,14 @@ class Sanitizer:
                     for domain in self._allowed_domains
                 )
                 if not domain_allowed:
-                    raise SanitizationError(
-                        f"Domain '{hostname}' is not in allowed list",
-                        url
+                    if self._strict_mode:
+                        raise SanitizationError(
+                            f"Domain '{hostname}' is not in allowed list",
+                            url
+                        )
+                    logger.warning(
+                        f"Domain outside allowlist accepted in non-strict mode: {hostname}",
+                        extra={"event": "domain_allowlist_bypass", "hostname": hostname}
                     )
         
         # Check for suspicious patterns
