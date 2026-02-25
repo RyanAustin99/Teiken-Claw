@@ -62,6 +62,9 @@ from app.tools.exec_tool import ExecTool, ExecutionMode
 from app.tools.memory_tool import MemoryTool
 from app.tools.scheduler_tool import SchedulerTool, JobStatus, TriggerType
 
+# Phase 11: Sub-agent tool
+from app.tools.subagent_tool import SubAgentTool
+
 
 def register_production_tools(registry: ToolRegistry) -> None:
     """
@@ -124,6 +127,14 @@ def register_production_tools(registry: ToolRegistry) -> None:
         timeout_sec=30.0,
     )
     registry.register(SchedulerTool(policy=scheduler_policy))
+    
+    # Sub-agent tool (Phase 11)
+    subagent_policy = ToolPolicy(
+        enabled=True,
+        admin_only=False,
+        timeout_sec=60.0,  # Sub-agents can take longer
+    )
+    registry.register(SubAgentTool(policy=subagent_policy))
 
 
 __all__ = [
@@ -167,6 +178,8 @@ __all__ = [
     "SchedulerTool",
     "JobStatus",
     "TriggerType",
+    # Phase 11: Sub-agent tool
+    "SubAgentTool",
     # Registration helpers
     "register_production_tools",
 ]

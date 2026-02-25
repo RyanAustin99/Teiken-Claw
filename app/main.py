@@ -101,6 +101,11 @@ from app.skills import (
     set_skill_router,
 )
 
+# Phase 11: Sub-agent imports
+from app.subagents.manager import SubAgentManager, get_subagent_manager, set_subagent_manager
+from app.subagents.executor import SubAgentExecutor, get_subagent_executor, set_subagent_executor
+from app.subagents.summarizer import SubAgentSummarizer, get_subagent_summarizer, set_subagent_summarizer
+
 
 # Configure logging before app creation
 setup_logging()
@@ -146,6 +151,11 @@ _scheduler_persistence: SchedulerPersistence = None
 _skill_loader: SkillLoader = None
 _skill_engine: SkillEngine = None
 _skill_router: SkillRouter = None
+
+# Phase 11: Global sub-agent components
+_subagent_manager: SubAgentManager = None
+_subagent_executor: SubAgentExecutor = None
+_subagent_summarizer: SubAgentSummarizer = None
 
 
 async def _initialize_queue_system() -> dict:
@@ -236,6 +246,10 @@ async def _initialize_queue_system() -> dict:
         if settings.is_development():
             logger.info("Registering mock tools for development...")
             register_mock_tools(_tool_registry)
+        else:
+            # Register production tools
+            from app.tools import register_production_tools
+            register_production_tools(_tool_registry)
         
         status["tool_registry"] = "initialized"
         status["tool_count"] = len(_tool_registry)
@@ -382,6 +396,27 @@ async def _initialize_queue_system() -> dict:
         _skill_router = get_skill_router()
         set_skill_router(_skill_router)
         status["skill_router"] = "initialized"
+        
+        # 24. Initialize Sub-Agent Manager (Phase 11)
+        logger.info("Initializing sub-agent manager...")
+        global _subagent_manager
+        _subagent_manager = get_subagent_manager()
+        set_subagent_manager(_subagent_manager)
+        status["subagent_manager"] = "initialized"
+        
+        # 25. Initialize Sub-Agent Executor (Phase 11)
+        logger.info("Initializing sub-agent executor...")
+        global _subagent_executor
+        _subagent_executor = get_subagent_executor()
+        set_subagent_executor(_subagent_executor)
+        status["subagent_executor"] = "initialized"
+        
+        # 26. Initialize Sub-Agent Summarizer (Phase 11)
+        logger.info("Initializing sub-agent summarizer...")
+        global _subagent_summarizer
+        _subagent_summarizer = get_subagent_summarizer()
+        set_subagent_summarizer(_subagent_summarizer)
+        status["subagent_summarizer"] = "initialized"
         
         # 13. Initialize Command Router
         logger.info("Initializing command router...")
