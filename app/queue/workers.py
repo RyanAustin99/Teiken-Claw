@@ -12,7 +12,7 @@ This module provides:
 
 import asyncio
 from datetime import datetime
-from typing import Optional, Callable, Awaitable, Dict, Any, List
+from typing import Optional, Callable, Awaitable, Dict, Any, List, TYPE_CHECKING
 from enum import Enum
 from dataclasses import dataclass, field
 
@@ -22,9 +22,8 @@ from app.queue.jobs import Job, JobType
 from app.queue.dispatcher import JobDispatcher, get_dispatcher
 from app.queue.locks import LockManager, get_lock_manager
 
-# Agent runtime imports
-from app.agent.runtime import AgentRuntime, AgentResult, get_agent_runtime
-from app.agent.result_formatter import format_response
+if TYPE_CHECKING:
+    from app.agent.runtime import AgentRuntime, AgentResult
 
 logger = get_logger(__name__)
 
@@ -79,7 +78,7 @@ class WorkerPool:
         num_workers: int = 3,
         ollama_concurrency: int = 2,
         lock_timeout: int = 300,
-        agent_runtime: Optional[AgentRuntime] = None,
+        agent_runtime: Optional["AgentRuntime"] = None,
     ):
         """
         Initialize the worker pool.
@@ -136,11 +135,13 @@ class WorkerPool:
         Args:
             job: Chat message job to process
         """
+        from app.agent.runtime import get_agent_runtime
+
         # Get agent runtime if not set
         runtime = self.agent_runtime or get_agent_runtime()
         
         # Run the agent
-        result: AgentResult = await runtime.run(job)
+        result: "AgentResult" = await runtime.run(job)
         
         # Log the result
         logger.info(

@@ -8,13 +8,16 @@ dependency injection function for FastAPI endpoints.
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.db.base import get_engine
+from app.db.base import get_engine, get_database_url
 
 
 # Global session factory
 _session_factory: async_sessionmaker[AsyncSession] | None = None
+_sync_session_factory: sessionmaker[Session] | None = None
 
 
 def get_session_factory() -> async_sessionmaker[AsyncSession]:
@@ -92,6 +95,13 @@ async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
         await session.close()
 
 
+@asynccontextmanager
+async def get_session() -> AsyncGenerator[AsyncSession, None]:
+    """Backward-compatible async session context manager alias."""
+    async with get_db_context() as session:
+        yield session
+
+
 async def create_session() -> AsyncSession:
     """
     Create a new database session.
@@ -106,14 +116,55 @@ async def create_session() -> AsyncSession:
     return factory()
 
 
+async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
+    """Backward-compatible async generator for direct session iteration."""
+    factory = get_session_factory()
+    session = factory()
+    try:
+        yield session
+    finally:
+        await session.close()
+
+
+def get_sync_session_factory() -> sessionmaker[Session]:
+    """
+    Get or create a sync SQLAlchemy session factory.
+
+    This exists for legacy modules that still use sync ORM patterns.
+    """
+    global _sync_session_factory
+
+    if _sync_session_factory is None:
+        db_url = get_database_url()
+        if db_url.startswith("sqlite+aiosqlite://"):
+            db_url = db_url.replace("sqlite+aiosqlite://", "sqlite://", 1)
+
+        engine = create_engine(db_url, future=True)
+        _sync_session_factory = sessionmaker(
+            bind=engine,
+            class_=Session,
+            expire_on_commit=False,
+            autoflush=False,
+            autocommit=False,
+        )
+
+    return _sync_session_factory
+
+
+def get_db_session() -> Session:
+    """Get a synchronous SQLAlchemy session for legacy sync modules."""
+    factory = get_sync_session_factory()
+    return factory()
+
+
 # Export commonly used items
 __all__ = [
     "get_db",
     "get_db_context",
+    "get_session",
     "create_session",
+    "get_async_session",
+    "get_sync_session_factory",
     "get_session_factory",
-    "get_db_session",  # Alias for create_session
+    "get_db_session",
 ]
-
-# Alias for backward compatibility
-get_db_session = create_session
