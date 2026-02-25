@@ -130,6 +130,21 @@ class Settings(BaseSettings):
     WEB_ALLOWED_DOMAINS: List[str] = []
     
     # =========================================================================
+    # Tool Configuration (Phase 8)
+    # =========================================================================
+    
+    # Web Tool Settings
+    WEB_TIMEOUT_SEC: float = 30.0
+    WEB_MAX_RESPONSE_SIZE: int = 1_000_000  # 1MB
+    
+    # Files Tool Settings
+    FILES_MAX_SIZE: int = 10_000_000  # 10MB
+    
+    # Exec Tool Settings
+    EXEC_TIMEOUT_SEC: float = 60.0
+    EXEC_ADMIN_ONLY: bool = True
+    
+    # =========================================================================
     # Redis Configuration (optional)
     # =========================================================================
     
