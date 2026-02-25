@@ -7,6 +7,160 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.0.0] - 2026-02-25
 
+### Added - Phase 9: Scheduler / Cron System
+
+#### APScheduler Integration
+- `app/scheduler/__init__.py` - Scheduler package exports
+- `app/scheduler/service.py` - SchedulerService class
+  - AsyncIOScheduler integration
+  - SQLite-backed job persistence
+  - Date, interval, and cron trigger support
+  - Job lifecycle management (add, remove, pause, resume)
+- `app/scheduler/jobs.py` - Job models
+  - ScheduledJob Pydantic model
+  - JobRunResult Pydantic model
+  - TriggerType, JobStatus enums
+  - TriggerConfig, JobAction models
+- `app/scheduler/parser.py` - Schedule parsing
+  - ScheduleParser class
+  - Cron expression parsing with aliases (@daily, @hourly, etc.)
+  - Interval trigger parsing
+  - Date trigger parsing
+  - Validation utilities
+- `app/scheduler/executor.py` - Job execution bridge
+  - SchedulerExecutor class
+  - Retry logic with configurable max_retries
+  - Dead-letter queue integration
+  - Job history tracking
+- `app/scheduler/control_state.py` - Control state management
+  - ControlStateManager class
+  - Control states: normal, pause_jobs, pause_tools, pause_all
+  - Persisted across restarts
+- `app/scheduler/persistence.py` - Job persistence
+  - SchedulerPersistence class
+  - SQLite-backed job storage
+  - Run history tracking
+
+#### Telegram Commands
+- `/jobs` - List scheduled jobs
+- `/jobs <job_id>` - Show job details
+- `/jobs pause <job_id>` - Pause specific job
+- `/jobs resume <job_id>` - Resume specific job
+- `/jobs delete <job_id>` - Delete job
+- `/jobs run <job_id>` - Run job now
+- `/pause jobs` - Pause all scheduled jobs
+- `/pause all` - Pause everything (read-only mode)
+- `/resume` - Resume from pause
+
+#### Configuration
+- `app/config/settings.py` - Added scheduler settings
+  - SCHEDULER_ENABLED: bool = True
+  - SCHEDULER_MAX_INSTANCES: int = 3
+  - SCHEDULER_COALESCE: bool = True
+  - SCHEDULER_MAX_INSTANCES_PER_JOB: int = 1
+  - SCHEDULER_MISFIRE_GRACE_SEC: int = 300
+  - SCHEDULER_JOB_DEFAULTS: dict
+
+#### Dependencies
+- `requirements.txt` - Added apscheduler>=3.10.0
+
+#### Tests
+- `tests/test_scheduler.py` - Comprehensive scheduler tests
+  - Schedule parser tests
+  - Job model tests
+  - Control state tests
+  - Persistence tests
+  - Executor tests
+  - Service tests
+  - Tool tests
+  - Integration tests
+
+### Added - Phase 8: Tool Implementations
+
+#### Security Utilities
+- `app/security/__init__.py` - Security package exports
+- `app/security/path_guard.py` - Path validation and traversal protection
+  - PathGuard class for workspace boundary enforcement
+  - normalize_path() for path normalization
+  - prevent_traversal() for traversal attack detection
+  - is_within_workspace() for boundary checking
+  - validate_and_resolve() for full validation pipeline
+- `app/security/sanitization.py` - Input sanitization utilities
+  - Sanitizer class for input validation
+  - sanitize_url() with scheme and domain validation
+  - sanitize_path() with traversal protection
+  - sanitize_command() with shell metacharacter detection
+  - sanitize_filename() with reserved name blocking
+
+#### Web Tool
+- `app/tools/web_tool.py` - Web operations tool
+  - search() using DuckDuckGo
+  - fetch() for URL content retrieval
+  - extract() for readable text extraction
+  - search_and_extract() combined operation
+  - Domain allowlist support
+  - Timeout and response size limits
+
+#### Files Tool
+- `app/tools/files_tool.py` - File operations tool
+  - list_dir() for directory listing
+  - read_file() for file reading
+  - write_file() for file writing
+  - search_files() for content/name search
+  - delete_file() for file deletion (admin only)
+  - Workspace sandbox enforcement
+  - Path traversal protection
+
+#### Exec Tool
+- `app/tools/exec_tool.py` - Command execution tool
+  - powershell_exec() with allowlist enforcement
+  - python_exec() with sandboxed execution
+  - Execution modes: safe, extended, disabled
+  - Command allowlist for PowerShell
+  - Protected environment variables
+  - Full audit logging
+
+#### Memory Tool
+- `app/tools/memory_tool.py` - Memory operations tool
+  - remember() for storing memories
+  - search() for searching memories
+  - forget() for deleting memories
+  - review() for listing memories
+  - pause()/resume() for auto-memory control
+  - Memory types: fact, preference, context, instruction, note
+  - Memory scopes: global, chat, session
+
+#### Scheduler Tool
+- `app/tools/scheduler_tool.py` - Scheduler operations tool
+  - create() for creating scheduled jobs
+  - list() for listing jobs
+  - pause()/resume() for job control
+  - delete() for job deletion
+  - run_now() for immediate execution
+  - pause_all()/resume_all() for bulk operations
+  - Trigger types: interval, cron, once
+
+#### Tests
+- `tests/test_security.py` - Security utilities tests
+- `tests/test_web_tool.py` - Web tool tests
+- `tests/test_files_tool.py` - Files tool tests
+- `tests/test_exec_tool.py` - Exec tool tests
+- `tests/test_memory_tool.py` - Memory tool tests
+- `tests/test_scheduler_tool.py` - Scheduler tool tests
+
+#### Configuration
+- Added tool settings to settings.py:
+  - WEB_TIMEOUT_SEC, WEB_MAX_RESPONSE_SIZE, WEB_ALLOWED_DOMAINS
+  - FILES_MAX_SIZE
+  - EXEC_TIMEOUT_SEC, EXEC_ADMIN_ONLY
+
+#### Dependencies
+- duckduckgo-search>=4.0.0
+- beautifulsoup4>=4.12.0
+- readability-lxml>=0.8.1
+- lxml>=4.9.0
+- aiofiles>=23.0.0
+
 ### Added - Phase 7: LLM Memory Extraction + Embeddings + Hybrid Retrieval
 
 #### LLM Memory Extractor

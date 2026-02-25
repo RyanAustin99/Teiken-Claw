@@ -139,7 +139,11 @@ class CommandRouter:
 
 *Scheduler Commands:*
 /jobs \\- List scheduled jobs
+/jobs \\<job\\_id\\> \\- Show job details
+/jobs pause \\<job\\_id\\> \\- Pause a job
+/jobs resume \\<job\\_id\\> \\- Resume a job
 /pause jobs \\- Pause all scheduled jobs
+/pause tools \\- Pause dangerous tools
 /pause all \\- Pause everything
 /resume \\- Resume from pause
 """
@@ -582,31 +586,247 @@ class CommandRouter:
         )
     
     # =========================================================================
-    # Scheduler Commands (Stubs for Phase 9)
+    # Scheduler Commands (Phase 9)
     # =========================================================================
     
     async def handle_jobs(
         self,
         chat_id: int,
-        user_id: int
+        user_id: int,
+        args: Optional[List[str]] = None
     ) -> str:
         """
         Handle /jobs command.
         
-        Stub for Phase 9 implementation.
+        Commands:
+            /jobs - List all scheduled jobs
+            /jobs <job_id> - Show job details
+            /jobs pause <job_id> - Pause specific job
+            /jobs resume <job_id> - Resume specific job
+            /jobs delete <job_id> - Delete job (admin only)
+            /jobs run <job_id> - Run job now (admin only)
         
         Args:
             chat_id: Telegram chat ID
             user_id: Telegram user ID
+            args: Command arguments
         
         Returns:
-            str: Jobs info or stub message
+            str: Jobs info or action result
         """
-        return (
-            "📅 *Scheduled Jobs*\n\n"
-            "⚠️ Scheduler not yet implemented\\. "
-            "This feature will be available in Phase 9\\."
+        from app.scheduler import (
+            get_scheduler_service,
+            get_control_state_manager,
         )
+        
+        scheduler = get_scheduler_service()
+        control_state = get_control_state_manager()
+        
+        # Check if scheduler is available
+        if not scheduler or not scheduler.is_running:
+            return (
+                "📅 *Scheduled Jobs*\n\n"
+                "⚠️ Scheduler is not running\\. "
+                "Please check system status\\."
+            )
+        
+        args = args or []
+        
+        # No args - list all jobs
+        if not args:
+            return await self._list_jobs(scheduler, control_state, chat_id)
+        
+        subcommand = args[0].lower()
+        
+        # Show job details
+        if subcommand not in ("pause", "resume", "delete", "run"):
+            return await self._show_job_details(scheduler, subcommand, chat_id)
+        
+        # Actions that require a job_id
+        if len(args) < 2:
+            return f"❌ Usage: /jobs {subcommand} <job\\_id>"
+        
+        job_id = args[1]
+        
+        if subcommand == "pause":
+            return await self._pause_job(scheduler, job_id, chat_id)
+        
+        if subcommand == "resume":
+            return await self._resume_job(scheduler, job_id, chat_id)
+        
+        if subcommand == "delete":
+            if not self._is_admin(chat_id):
+                return self._format_admin_required()
+            return await self._delete_job(scheduler, job_id, chat_id)
+        
+        if subcommand == "run":
+            if not self._is_admin(chat_id):
+                return self._format_admin_required()
+            return await self._run_job_now(scheduler, job_id, chat_id)
+        
+        return f"❌ Unknown subcommand: {subcommand}"
+    
+    async def _list_jobs(
+        self,
+        scheduler,
+        control_state,
+        chat_id: int
+    ) -> str:
+        """List all scheduled jobs."""
+        jobs = scheduler.list_jobs()
+        
+        if not jobs:
+            return (
+                "📅 *Scheduled Jobs*\n\n"
+                "No scheduled jobs found\\.\n\n"
+                "Use the scheduler tool to create jobs\\."
+            )
+        
+        lines = ["📅 *Scheduled Jobs*\n"]
+        
+        # Show control state
+        if control_state:
+            state = control_state.get_state()
+            if state != "normal":
+                lines.append(f"⚠️ *State:* {state}")
+                lines.append("")
+        
+        for job in jobs[:10]:
+            status = "✅" if job.enabled else "⏸️"
+            trigger = job.trigger_type.value if hasattr(job.trigger_type, 'value') else str(job.trigger_type)
+            next_run = job.next_run_time.strftime("%Y-%m-%d %H:%M") if job.next_run_time else "N/A"
+            
+            # Escape markdown
+            name = job.name.replace("_", "\\_").replace("*", "\\*")[:30]
+            
+            lines.append(f"{status} `{job.job_id}` \\({trigger}\\)")
+            lines.append(f"   └ {name}")
+            lines.append(f"   └ Next: {next_run}")
+        
+        if len(jobs) > 10:
+            lines.append(f"\n_\\.\\.\\. and {len(jobs) - 10} more_")
+        
+        lines.append(f"\n_Total: {len(jobs)} jobs_")
+        
+        return "\n".join(lines)
+    
+    async def _show_job_details(
+        self,
+        scheduler,
+        job_id: str,
+        chat_id: int
+    ) -> str:
+        """Show details for a specific job."""
+        job = scheduler.get_job(job_id)
+        
+        if not job:
+            return f"❌ Job not found: `{job_id}`"
+        
+        lines = [f"📅 *Job Details: `{job_id}`*\n"]
+        
+        status = "✅ Enabled" if job.enabled else "⏸️ Paused"
+        lines.append(f"*Status:* {status}")
+        lines.append(f"*Name:* {job.name.replace('_', '\\_')}")
+        
+        trigger = job.trigger_type.value if hasattr(job.trigger_type, 'value') else str(job.trigger_type)
+        lines.append(f"*Trigger:* {trigger}")
+        
+        if job.next_run_time:
+            lines.append(f"*Next Run:* {job.next_run_time.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+        
+        if job.last_run_time:
+            lines.append(f"*Last Run:* {job.last_run_time.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+        
+        lines.append(f"*Run Count:* {job.run_count}")
+        
+        # Show trigger config
+        if job.trigger_config:
+            config = job.trigger_config.model_dump(exclude_none=True)
+            if config:
+                lines.append("\n*Trigger Config:*")
+                for key, value in config.items():
+                    if value is not None:
+                        lines.append(f"  {key}: {value}")
+        
+        # Show action
+        if job.action:
+            lines.append(f"\n*Action Type:* {job.action.type}")
+            content = job.action.content[:100].replace("_", "\\_").replace("*", "\\*")
+            lines.append(f"*Content:* {content}")
+        
+        return "\n".join(lines)
+    
+    async def _pause_job(
+        self,
+        scheduler,
+        job_id: str,
+        chat_id: int
+    ) -> str:
+        """Pause a specific job."""
+        success = await scheduler.pause_job(job_id)
+        
+        if success:
+            logger.info(
+                f"Job {job_id} paused by chat {chat_id}",
+                extra={"event": "job_paused", "job_id": job_id, "chat_id": chat_id}
+            )
+            return f"⏸️ Job `{job_id}` has been paused\\."
+        
+        return f"❌ Failed to pause job `{job_id}`\\."
+    
+    async def _resume_job(
+        self,
+        scheduler,
+        job_id: str,
+        chat_id: int
+    ) -> str:
+        """Resume a specific job."""
+        success = await scheduler.resume_job(job_id)
+        
+        if success:
+            logger.info(
+                f"Job {job_id} resumed by chat {chat_id}",
+                extra={"event": "job_resumed", "job_id": job_id, "chat_id": chat_id}
+            )
+            return f"▶️ Job `{job_id}` has been resumed\\."
+        
+        return f"❌ Failed to resume job `{job_id}`\\."
+    
+    async def _delete_job(
+        self,
+        scheduler,
+        job_id: str,
+        chat_id: int
+    ) -> str:
+        """Delete a job (admin only)."""
+        success = await scheduler.remove_job(job_id)
+        
+        if success:
+            logger.warning(
+                f"Job {job_id} deleted by admin {chat_id}",
+                extra={"event": "job_deleted", "job_id": job_id, "chat_id": chat_id}
+            )
+            return f"🗑️ Job `{job_id}` has been deleted\\."
+        
+        return f"❌ Failed to delete job `{job_id}`\\."
+    
+    async def _run_job_now(
+        self,
+        scheduler,
+        job_id: str,
+        chat_id: int
+    ) -> str:
+        """Run a job immediately (admin only)."""
+        success = await scheduler.run_job_now(job_id)
+        
+        if success:
+            logger.info(
+                f"Job {job_id} triggered by admin {chat_id}",
+                extra={"event": "job_triggered", "job_id": job_id, "chat_id": chat_id}
+            )
+            return f"▶️ Job `{job_id}` has been triggered to run now\\."
+        
+        return f"❌ Failed to trigger job `{job_id}`\\."
     
     async def handle_pause(
         self,
@@ -617,44 +837,86 @@ class CommandRouter:
         """
         Handle /pause command.
         
+        Commands:
+            /pause - Show pause options
+            /pause jobs - Pause all scheduled jobs
+            /pause tools - Pause dangerous tools
+            /pause all - Pause everything (read-only mode)
+        
         Args:
             chat_id: Telegram chat ID
             user_id: Telegram user ID
-            args: Command arguments (jobs, all)
+            args: Command arguments (jobs, tools, all)
         
         Returns:
             str: Pause confirmation
         """
+        from app.scheduler import get_control_state_manager
+        
+        control_state = get_control_state_manager()
+        
         if not args:
             return (
                 "⏸️ *Pause Commands*\n\n"
                 "/pause jobs \\- Pause all scheduled jobs\n"
-                "/pause all \\- Pause everything"
+                "/pause tools \\- Pause dangerous tools\n"
+                "/pause all \\- Pause everything \\(read\\-only\\)"
             )
         
         subcommand = args[0].lower()
         
+        if not control_state:
+            # Fallback to local state if control state manager not available
+            if subcommand == "jobs":
+                self._paused_jobs.add(chat_id)
+                return "⏸️ Jobs paused locally \\(control state not available\\)\\."
+            
+            if subcommand == "all":
+                self._all_paused = True
+                return "⏸️ ALL PAUSED locally \\(control state not available\\)\\."
+            
+            return f"❌ Unknown subcommand: {subcommand}"
+        
         if subcommand == "jobs":
-            self._paused_jobs.add(chat_id)
+            result = control_state.pause_jobs(changed_by=f"chat:{chat_id}")
             logger.info(
-                f"Jobs paused for chat {chat_id}",
+                f"Jobs paused by chat {chat_id}",
                 extra={"event": "jobs_paused", "chat_id": chat_id}
             )
             return (
                 "⏸️ *Jobs Paused*\n\n"
-                "Scheduled jobs are now paused\\. Use /resume to resume\\.\n\n"
-                "⚠️ Full scheduler functionality coming in Phase 9\\."
+                "All scheduled jobs are now paused\\. Use /resume to resume\\."
+            )
+        
+        if subcommand == "tools":
+            result = control_state.pause_tools(changed_by=f"chat:{chat_id}")
+            logger.info(
+                f"Tools paused by chat {chat_id}",
+                extra={"event": "tools_paused", "chat_id": chat_id}
+            )
+            return (
+                "⏸️ *Tools Paused*\n\n"
+                "Dangerous tools are now disabled:\n"
+                "• exec\n"
+                "• files\\_write\n"
+                "• files\\_delete\n"
+                "• web\\_post/put/delete\n\n"
+                "Use /resume to restore\\."
             )
         
         if subcommand == "all":
-            self._all_paused = True
+            result = control_state.pause_all(changed_by=f"chat:{chat_id}")
             logger.warning(
-                f"All operations paused by chat {chat_id}",
+                f"ALL operations paused by chat {chat_id}",
                 extra={"event": "all_paused", "chat_id": chat_id}
             )
             return (
                 "⏸️ *ALL PAUSED*\n\n"
-                "All operations are now paused\\. Use /resume to resume\\."
+                "System is now in read\\-only mode:\n"
+                "• Scheduled jobs paused\n"
+                "• Dangerous tools disabled\n"
+                "• No modifications allowed\n\n"
+                "Use /resume to restore\\."
             )
         
         return f"❌ Unknown subcommand: {subcommand}"
@@ -667,6 +929,8 @@ class CommandRouter:
         """
         Handle /resume command.
         
+        Restores normal operation from any pause state.
+        
         Args:
             chat_id: Telegram chat ID
             user_id: Telegram user ID
@@ -674,26 +938,41 @@ class CommandRouter:
         Returns:
             str: Resume confirmation
         """
-        chat_id_str = str(chat_id)
+        from app.scheduler import get_control_state_manager
         
-        # Clear all pause states
+        control_state = get_control_state_manager()
+        
+        # Clear local pause states
         self._paused_chats.discard(chat_id)
         self._paused_jobs.discard(chat_id)
+        self._all_paused = False
         
-        if self._all_paused:
-            self._all_paused = False
+        if not control_state:
             logger.info(
-                f"All operations resumed by chat {chat_id}",
-                extra={"event": "all_resumed", "chat_id": chat_id}
+                f"Operations resumed locally by chat {chat_id}",
+                extra={"event": "resumed_local", "chat_id": chat_id}
             )
-            return "▶️ *ALL RESUMED*\n\nAll operations have been resumed\\."
+            return "▶️ *Resumed*\n\nOperations have been resumed locally\\."
+        
+        # Get current state
+        current_state = control_state.get_state()
+        
+        if current_state == "normal":
+            return "✅ System is already in normal operation mode\\."
+        
+        # Resume to normal
+        result = control_state.resume(changed_by=f"chat:{chat_id}")
         
         logger.info(
-            f"Operations resumed for chat {chat_id}",
-            extra={"event": "resumed", "chat_id": chat_id}
+            f"Operations resumed by chat {chat_id} (was: {current_state})",
+            extra={"event": "all_resumed", "chat_id": chat_id, "previous_state": current_state}
         )
         
-        return "▶️ *Resumed*\n\nOperations have been resumed\\."
+        return (
+            "▶️ *ALL RESUMED*\n\n"
+            f"System restored to normal operation\\.\n"
+            f"Previous state: {current_state}"
+        )
     
     # =========================================================================
     # Admin Commands
@@ -750,6 +1029,11 @@ class CommandRouter:
         Returns:
             str: Admin statistics
         """
+        from app.scheduler import (
+            get_scheduler_service,
+            get_control_state_manager,
+        )
+        
         stats_lines = ["📊 *Admin Statistics*\n"]
         
         # Queue stats
@@ -770,6 +1054,28 @@ class CommandRouter:
             stats_lines.append(f"  Total: {worker_status.get('total_workers', 0)}")
             stats_lines.append(f"  Jobs Completed: {worker_status.get('jobs_completed', 0)}")
         
+        # Scheduler stats
+        scheduler = get_scheduler_service()
+        if scheduler and scheduler.is_running:
+            scheduler_stats = scheduler.get_stats()
+            stats_lines.append("\n📅 *Scheduler:*")
+            stats_lines.append(f"  Total Jobs: {scheduler_stats.total_jobs}")
+            stats_lines.append(f"  Enabled: {scheduler_stats.enabled_jobs}")
+            stats_lines.append(f"  Disabled: {scheduler_stats.disabled_jobs}")
+            if scheduler_stats.next_run_time:
+                stats_lines.append(f"  Next Run: {scheduler_stats.next_run_time.strftime('%H:%M:%S')}")
+        else:
+            stats_lines.append("\n📅 *Scheduler:* Not running")
+        
+        # Control state
+        control_state = get_control_state_manager()
+        if control_state:
+            state_status = control_state.get_status()
+            stats_lines.append("\n⏸️ *Control State:*")
+            stats_lines.append(f"  State: {state_status['state']}")
+            stats_lines.append(f"  Jobs Paused: {'Yes' if state_status['is_jobs_paused'] else 'No'}")
+            stats_lines.append(f"  Tools Paused: {'Yes' if state_status['is_tools_paused'] else 'No'}")
+        
         # Mode distribution
         if self.current_modes:
             stats_lines.append("\n🎯 *Mode Distribution:*")
@@ -779,8 +1085,8 @@ class CommandRouter:
             for mode, count in mode_counts.items():
                 stats_lines.append(f"  {mode}: {count}")
         
-        # Pause status
-        stats_lines.append("\n⏸️ *Pause Status:*")
+        # Pause status (legacy)
+        stats_lines.append("\n⏸️ *Local Pause Status:*")
         stats_lines.append(f"  All Paused: {'Yes' if self._all_paused else 'No'}")
         stats_lines.append(f"  Paused Jobs: {len(self._paused_jobs)}")
         

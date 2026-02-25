@@ -76,6 +76,18 @@ from app.memory.retrieval import MemoryRetriever, get_retriever, set_retriever
 from app.memory.dedupe import MemoryDeduplicator, get_deduplicator, set_deduplicator
 from app.memory.extractor_llm import LLMMemoryExtractor, get_llm_extractor, set_llm_extractor
 
+# Phase 9: Scheduler imports
+from app.scheduler import (
+    SchedulerService,
+    SchedulerExecutor,
+    ControlStateManager,
+    SchedulerPersistence,
+    set_scheduler_service,
+    set_scheduler_executor,
+    set_control_state_manager,
+    set_scheduler_persistence,
+)
+
 
 # Configure logging before app creation
 setup_logging()
@@ -110,6 +122,12 @@ _embedding_service: EmbeddingService = None
 _memory_retriever: MemoryRetriever = None
 _memory_deduplicator: MemoryDeduplicator = None
 _llm_extractor: LLMMemoryExtractor = None
+
+# Phase 9: Global scheduler components
+_scheduler_service: SchedulerService = None
+_scheduler_executor: SchedulerExecutor = None
+_control_state_manager: ControlStateManager = None
+_scheduler_persistence: SchedulerPersistence = None
 
 
 async def _initialize_queue_system() -> dict:
@@ -258,7 +276,54 @@ async def _initialize_queue_system() -> dict:
         set_llm_extractor(_llm_extractor)
         status["llm_extractor"] = "initialized"
         
-        # 16. Initialize Worker Pool
+        # 16. Initialize Scheduler Persistence (Phase 9)
+        if settings.SCHEDULER_ENABLED:
+            logger.info("Initializing scheduler persistence...")
+            global _scheduler_persistence
+            _scheduler_persistence = SchedulerPersistence()
+            set_scheduler_persistence(_scheduler_persistence)
+            status["scheduler_persistence"] = "initialized"
+        else:
+            status["scheduler_persistence"] = "disabled"
+        
+        # 17. Initialize Control State Manager (Phase 9)
+        if settings.SCHEDULER_ENABLED:
+            logger.info("Initializing control state manager...")
+            global _control_state_manager
+            _control_state_manager = ControlStateManager()
+            set_control_state_manager(_control_state_manager)
+            status["control_state_manager"] = "initialized"
+        else:
+            status["control_state_manager"] = "disabled"
+        
+        # 18. Initialize Scheduler Executor (Phase 9)
+        if settings.SCHEDULER_ENABLED:
+            logger.info("Initializing scheduler executor...")
+            global _scheduler_executor
+            _scheduler_executor = SchedulerExecutor(
+                dispatcher=_dispatcher,
+                dead_letter_queue=_dead_letter_queue,
+                persistence=_scheduler_persistence,
+            )
+            set_scheduler_executor(_scheduler_executor)
+            status["scheduler_executor"] = "initialized"
+        else:
+            status["scheduler_executor"] = "disabled"
+        
+        # 19. Initialize Scheduler Service (Phase 9)
+        if settings.SCHEDULER_ENABLED:
+            logger.info("Initializing scheduler service...")
+            global _scheduler_service
+            _scheduler_service = SchedulerService(
+                executor=_scheduler_executor,
+                persistence=_scheduler_persistence,
+            )
+            set_scheduler_service(_scheduler_service)
+            status["scheduler_service"] = "initialized"
+        else:
+            status["scheduler_service"] = "disabled"
+        
+        # 20. Initialize Worker Pool
         logger.info("Initializing worker pool...")
         _worker_pool = WorkerPool(
             dispatcher=_dispatcher,
@@ -358,6 +423,12 @@ async def _start_queue_workers() -> dict:
             await _telegram_bot.start()
             status["telegram_bot"] = "started"
         
+        # Start Scheduler Service (Phase 9)
+        if _scheduler_service and settings.SCHEDULER_ENABLED:
+            logger.info("Starting scheduler service...")
+            await _scheduler_service.start()
+            status["scheduler_service"] = "started"
+        
         logger.info(
             "Queue workers started",
             extra={"event": "queue_workers_started", "status": status}
@@ -432,6 +503,16 @@ async def _stop_queue_workers() -> dict:
         except Exception as e:
             logger.error(f"Error shutting down dispatcher: {e}", exc_info=True)
             status["dispatcher"] = f"error: {e}"
+    
+    # Stop Scheduler Service (Phase 9)
+    if _scheduler_service:
+        try:
+            logger.info("Stopping scheduler service...")
+            await _scheduler_service.stop()
+            status["scheduler_service"] = "stopped"
+        except Exception as e:
+            logger.error(f"Error stopping scheduler service: {e}", exc_info=True)
+            status["scheduler_service"] = f"error: {e}"
     
     logger.info(
         "Queue workers stopped",
@@ -700,6 +781,24 @@ async def readiness_check() -> dict:
         }
     else:
         components["outbound"] = {"status": "not_initialized"}
+    
+    # Check scheduler (Phase 9)
+    if settings.SCHEDULER_ENABLED:
+        if _scheduler_service and _scheduler_service.is_running():
+            components["scheduler"] = {
+                "status": "running",
+                "jobs_count": len(_scheduler_service.list_jobs()),
+            }
+        else:
+            components["scheduler"] = {
+                "status": "stopped" if _scheduler_service else "not_initialized"
+            }
+        if _control_state_manager:
+            components["control_state"] = {
+                "state": _control_state_manager.get_state(),
+            }
+    else:
+        components["scheduler"] = {"status": "disabled"}
     
     return {
         "status": overall_status,

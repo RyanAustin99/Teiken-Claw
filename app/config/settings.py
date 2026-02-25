@@ -145,6 +145,21 @@ class Settings(BaseSettings):
     EXEC_ADMIN_ONLY: bool = True
     
     # =========================================================================
+    # Scheduler Configuration (Phase 9)
+    # =========================================================================
+    
+    SCHEDULER_ENABLED: bool = True
+    SCHEDULER_MAX_INSTANCES: int = 3
+    SCHEDULER_COALESCE: bool = True
+    SCHEDULER_MAX_INSTANCES_PER_JOB: int = 1
+    SCHEDULER_MISFIRE_GRACE_SEC: int = 300  # 5 minutes
+    SCHEDULER_JOB_DEFAULTS: dict = {
+        "coalesce": True,
+        "max_instances": 1,
+        "misfire_grace_time": 300,
+    }
+    
+    # =========================================================================
     # Redis Configuration (optional)
     # =========================================================================
     
