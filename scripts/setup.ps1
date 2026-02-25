@@ -154,7 +154,19 @@ $EnvFile = Join-Path $ProjectRoot ".env"
 if (-not (Test-Path $EnvExample)) {
     Write-Warn ".env.example not found - skipping .env creation"
 } elseif (Test-Path $EnvFile) {
-    Write-Info ".env already exists - skipping"
+    # Check if .env has old comma-separated list format (invalid for pydantic-settings)
+    $EnvContent = Get-Content $EnvFile -Raw -ErrorAction SilentlyContinue
+    $HasOldExecFormat = $EnvContent -match "EXEC_ALLOWLIST=[a-z]"
+    $HasOldWebFormat = $EnvContent -match "WEB_ALLOWED_DOMAINS=[a-z]"
+    
+    if ($HasOldExecFormat -or $HasOldWebFormat) {
+        Write-Warn ".env has old format (comma-separated lists) - recreating from .env.example"
+        Remove-Item $EnvFile -Force
+        Copy-Item $EnvExample $EnvFile
+        Write-Success "Recreated .env with correct JSON array format"
+    } else {
+        Write-Info ".env already exists - skipping"
+    }
 } else {
     Copy-Item $EnvExample $EnvFile
     Write-Success "Created .env from .env.example"
