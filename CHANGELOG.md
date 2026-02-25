@@ -7,6 +7,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.0.0] - 2026-02-25
 
+### Added - Phase 4: Core Agent Loop
+
+#### Agent Runtime
+- `app/agent/runtime.py` - Core agent runtime with tool-calling loop
+  - AgentRuntime class with run(job) -> AgentResult method
+  - MAX_TOOL_TURNS guard (default: 10) to prevent infinite loops
+  - Duplicate tool call detection using argument hashing
+  - Circuit breaker integration for fault tolerance
+  - Retry logic for transient errors
+  - Graceful error handling for all error types
+  - AgentResult Pydantic model for structured responses
+  - ToolCallRecord for duplicate detection
+
+#### Tool System
+- `app/tools/base.py` - Base tool interface
+  - Tool abstract base class with name, description, json_schema
+  - ToolResult Pydantic model (ok, content, error_code, error_message)
+  - ToolPolicy Pydantic model (enabled, admin_only, allowed_chats, timeout_sec)
+  - ToolError, ToolTimeoutError, ToolDisabledError, ToolPermissionError
+- `app/tools/registry.py` - Tool registry for management
+  - ToolRegistry class with register, get, get_all_schemas methods
+  - execute_tool_call() with timeout and error handling
+  - Permission checking integration
+  - Global registry singleton pattern
+- `app/tools/policies.py` - Tool policies and permission checking
+  - check_tool_permission() function
+  - get_paused_behavior() function
+  - Default policies for common tool types
+  - Policy validation and merging
+- `app/tools/validators.py` - Argument validation and coercion
+  - validate_tool_args() with schema validation
+  - coerce_value() for type coercion
+  - safe_defaults() for default value generation
+  - Support for string, integer, number, boolean, array, object types
+
+#### Mock Tools
+- `app/tools/mock_tools.py` - Mock tools for development
+  - EchoTool - echoes input back
+  - TimeTool - returns current time in various formats
+  - StatusTool - returns system status
+  - DelayTool - tests timeout handling
+  - ErrorTool - tests error handling
+  - register_mock_tools() function for easy registration
+
+#### Context Building
+- `app/agent/context_builder.py` - Context assembly
+  - ContextBuilder class with build() method
+  - Token budget management (placeholder)
+  - Message truncation for long conversations
+  - System prompt integration
+- `app/agent/prompts.py` - System prompt building
+  - build_system_prompt() with mode support
+  - build_tool_prompt() for tool descriptions
+  - MODE_PROMPTS dictionary for different modes
+  - DEFAULT_SYSTEM_PROMPT template
+
+#### Response Formatting
+- `app/agent/result_formatter.py` - Response formatting
+  - format_response() for channel-specific formatting
+  - format_for_telegram() with MarkdownV2 escaping
+  - format_for_cli() for terminal output
+  - chunk_response() for long message splitting
+  - extract_code_blocks() for code extraction
+
+#### Integration
+- Updated `app/main.py` with ToolRegistry and AgentRuntime initialization
+- Updated `app/queue/workers.py` with chat message handler
+- Updated `app/agent/__init__.py` with new exports
+- Updated `app/tools/__init__.py` with all tool exports
+
+#### Tests
+- `tests/test_agent_runtime.py` - Agent runtime tests (12 test cases)
+- `tests/test_tools.py` - Tool registry and validator tests (25+ test cases)
+
 ### Added - Phase 3: Ollama Client, Retry Logic, and Circuit Breaker
 
 #### Ollama HTTP Client

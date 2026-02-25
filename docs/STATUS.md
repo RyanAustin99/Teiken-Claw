@@ -4,7 +4,7 @@
 
 ## Last Updated: 2026-02-25
 
-## Current Phase: Phase 3 Complete
+## Current Phase: Phase 4 Complete
 
 ---
 
@@ -48,15 +48,30 @@
 - Health check integration with Ollama status
 - Comprehensive test suite
 
-### 🔄 Phase 4: Interface Layer (NEXT)
+### ✅ Phase 4: Core Agent Loop (COMPLETE)
+- AgentRuntime with tool-calling loop
+- MAX_TOOL_TURNS guard (10 turns max)
+- Duplicate tool call detection
+- Tool base class with ToolResult and ToolPolicy
+- ToolRegistry for tool management
+- Tool validators with type coercion
+- Mock tools for development (Echo, Time, Status, Delay, Error)
+- ContextBuilder for message assembly
+- System prompt building with mode support
+- Response formatting (Telegram, CLI)
+- Integration with worker pool
+- Comprehensive test suite (37+ tests)
+
+### 🔄 Phase 5: Interface Layer (NEXT)
 - Telegram bot integration
 - CLI interface
 - Full rate limiting integration
+- Message persistence
 
-### ⏳ Phase 5: Testing & Documentation (PLANNED)
-- Unit tests
-- Integration tests
-- API documentation
+### ⏳ Phase 6: Memory & Soul (PLANNED)
+- Memory system integration
+- Soul/personality configuration
+- Long-term memory retrieval
 
 ---
 
