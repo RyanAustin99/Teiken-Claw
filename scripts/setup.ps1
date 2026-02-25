@@ -205,20 +205,35 @@ if (-not (Test-Path $AlembicIni)) {
         }
     }
     
-    # Run alembic and capture output properly
-    $AlembicOutput = & $PythonVenv -m alembic upgrade head 2>&1 | Out-String
-    $AlembicExitCode = $LASTEXITCODE
-    
-    # Display output regardless of success/failure
-    if ($AlembicOutput) {
-        Write-Info $AlembicOutput
-    }
-    
-    if ($AlembicExitCode -ne 0) {
-        Write-Warn "Database migration had issues (exit code: $AlembicExitCode)"
-        Write-Warn "This may be normal for first run or if tables already exist"
-    } else {
-        Write-Success "Database initialized"
+    # Run alembic and capture output - use temp file for stderr to avoid truncation
+    $TempErrFile = [System.IO.Path]::GetTempFileName()
+    try {
+        # Run alembic, redirecting stderr to temp file
+        & $PythonVenv -m alembic upgrade head 2>$TempErrFile | Out-Null
+        $AlembicExitCode = $LASTEXITCODE
+        
+        # Read stderr output
+        $ErrOutput = Get-Content $TempErrFile -Raw -ErrorAction SilentlyContinue
+        
+        # Display any error output
+        if ($ErrOutput) {
+            Write-Info "Alembic stderr: $ErrOutput"
+        }
+        
+        if ($AlembicExitCode -ne 0) {
+            Write-Warn "Database migration had issues (exit code: $AlembicExitCode)"
+            if ($ErrOutput) {
+                Write-Warn "Error details: $ErrOutput"
+            }
+            Write-Warn "This may be normal for first run or if tables already exist"
+        } else {
+            Write-Success "Database initialized"
+        }
+    } finally {
+        # Clean up temp file
+        if (Test-Path $TempErrFile) {
+            Remove-Item $TempErrFile -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 
