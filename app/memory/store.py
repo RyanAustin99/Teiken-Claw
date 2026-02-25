@@ -10,7 +10,9 @@ This module provides CRUD operations for the memory system, including:
 """
 
 from typing import Optional, List, Dict, Any, Union
-from datetime import datetime
+from datetime import datetime, timedelta
+
+import json
 
 from sqlalchemy import and_, or_, func
 from sqlalchemy.orm import Session as SQLAlchemySession
@@ -26,8 +28,8 @@ from app.memory.models import (
 class MemoryStore:
     """Memory store for managing all memory-related operations."""
     
-    def __init__(self):
-        self._session = get_db_session()
+    def __init__(self, session: Optional[SQLAlchemySession] = None):
+        self._session = session or get_db_session()
     
     # =========================================================================
     # Session Management
@@ -38,7 +40,7 @@ class MemoryStore:
         session = Session(
             chat_id=chat_id,
             mode=mode,
-            metadata=metadata or {}
+            metadata_=metadata or {}
         )
         self._session.add(session)
         self._session.commit()
@@ -80,7 +82,7 @@ class MemoryStore:
         """Create a new thread."""
         thread = Thread(
             session_id=session_id,
-            metadata=metadata or {}
+            metadata_=metadata or {}
         )
         self._session.add(thread)
         self._session.commit()
@@ -126,7 +128,7 @@ class MemoryStore:
             thread_id=thread_id,
             role=role,
             content=content,
-            metadata=metadata or {}
+            metadata_=metadata or {}
         )
         self._session.add(message)
         self._session.commit()
@@ -202,7 +204,6 @@ class MemoryStore:
             tags=tags,
             scope=scope,
             confidence=confidence,
-            metadata=metadata or {}
         )
         self._session.add(memory)
         self._session.commit()
@@ -485,17 +486,23 @@ class MemoryStore:
     # Control State Management
     # =========================================================================
     
-    def get_control_state(self, key: str) -> Optional[Dict]:
+    def get_control_state(self, key: str) -> Optional[Any]:
         """Get control state value."""
         state = (
             self._session.query(ControlState)
             .filter(ControlState.key == key)
             .first()
         )
-        return state.value if state else None
+        if not state:
+            return None
+        try:
+            return json.loads(state.value)
+        except Exception:
+            return state.value
     
-    def set_control_state(self, key: str, value: Dict) -> ControlState:
+    def set_control_state(self, key: str, value: Any) -> ControlState:
         """Set control state value."""
+        serialized = json.dumps(value)
         state = (
             self._session.query(ControlState)
             .filter(ControlState.key == key)
@@ -503,10 +510,10 @@ class MemoryStore:
         )
         
         if state:
-            state.value = value
+            state.value = serialized
             state.updated_at = datetime.now()
         else:
-            state = ControlState(key=key, value=value)
+            state = ControlState(key=key, value=serialized)
             self._session.add(state)
         
         self._session.commit()
@@ -532,7 +539,7 @@ class MemoryStore:
         """Get an idempotency key."""
         return (
             self._session.query(IdempotencyKey)
-            .filter(ControlState.key == key)
+            .filter(IdempotencyKey.key == key)
             .first()
         )
     

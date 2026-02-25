@@ -152,6 +152,16 @@ class Job(BaseModel):
         """
         return (self.priority, self.created_at, self)
 
+    @property
+    def id(self) -> str:
+        """Backward-compatible alias for job_id."""
+        return self.job_id
+
+    @property
+    def message(self) -> str:
+        """Backward-compatible message accessor from payload."""
+        return self.payload.get("text", "") or self.payload.get("message", "")
+
 
 def create_job(
     source: JobSource,

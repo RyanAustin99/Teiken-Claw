@@ -25,7 +25,8 @@ class MemoryExtractionRules:
         }
         self._sensitive_patterns = [
             r'password', r'secret', r'api[_-]?key', r'token', r'private',
-            r'auth', r'credential', r'login', r'passphrase', r'private[_-]?key'
+            r'auth', r'credential', r'login', r'passphrase', r'private[_-]?key',
+            r'credit[_\s-]?card', r'card[_\s-]?number', r'ssn', r'social[_\s-]?security'
         ]
         self._category_patterns = {
             "preference": [
@@ -121,7 +122,8 @@ class MemoryExtractionRules:
         # Check for common sensitive patterns
         if any(keyword in content_lower for keyword in [
             'password', 'secret', 'key', 'token', 'private',
-            'auth', 'credential', 'login', 'passphrase'
+            'auth', 'credential', 'login', 'passphrase',
+            'credit card', 'card number', 'ssn', 'social security'
         ]):
             return True
         
@@ -190,6 +192,34 @@ class MemoryExtractionRules:
                     preferences.append(preference)
         
         return preferences[:2]  # Return up to 2 preferences
+
+    # =========================================================================
+    # Public Compatibility API
+    # =========================================================================
+
+    def is_allowed_category(self, category: str) -> bool:
+        """Public wrapper for allowed-category checks."""
+        return self._is_allowed_category(category)
+
+    def is_sensitive_content(self, content: str) -> bool:
+        """Public wrapper for sensitive content checks."""
+        return self._is_sensitive_content(content)
+
+    def get_category(self, content: str) -> Optional[str]:
+        """Public wrapper for category detection."""
+        return self._get_category(content)
+
+    def extract_facts(self, content: str) -> List[str]:
+        """Public wrapper for fact extraction."""
+        if not content or not content.strip():
+            return []
+        return self._extract_facts(content)
+
+    def extract_preferences(self, content: str) -> List[str]:
+        """Public wrapper for preference extraction."""
+        if not content or not content.strip():
+            return []
+        return self._extract_preferences(content)
     
     # =========================================================================
     # Filtering

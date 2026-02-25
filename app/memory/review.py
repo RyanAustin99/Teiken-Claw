@@ -18,14 +18,14 @@ from app.memory.store import MemoryStore
 class MemoryReview:
     """Memory review and management commands."""
     
-    def __init__(self):
-        self.store = MemoryStore()
+    def __init__(self, session=None):
+        self.store = MemoryStore(session=session)
     
     # =========================================================================
     # Memory Listing
     # =========================================================================
     
-    def list_memories(
+    async def list_memories(
         self, 
         scope: Optional[str] = None,
         memory_type: Optional[str] = None,
@@ -55,7 +55,7 @@ class MemoryReview:
             "audit_count": len(self.store.get_memory_audit_trail(memory.id, limit=1))
         } for memory in memories]
     
-    def search_memories(
+    async def search_memories(
         self, 
         query: str, 
         scope: Optional[str] = None,
@@ -85,7 +85,7 @@ class MemoryReview:
             "relevance": self._calculate_relevance(memory.content, query)
         } for memory in memories]
     
-    def get_memory(self, memory_id: int) -> Optional[Dict]:
+    async def get_memory(self, memory_id: int) -> Optional[Dict]:
         """Get detailed memory information."""
         memory = self.store.get_memory(memory_id)
         if not memory:
@@ -108,7 +108,7 @@ class MemoryReview:
     # Memory Editing
     # =========================================================================
     
-    def edit_memory(self, memory_id: int, updates: Dict[str, Any]) -> bool:
+    async def edit_memory(self, memory_id: int, updates: Dict[str, Any]) -> bool:
         """Edit a memory record."""
         # Validate updates
         allowed_fields = {"content", "tags", "scope", "confidence"}
@@ -126,11 +126,11 @@ class MemoryReview:
         
         return False
     
-    def delete_memory(self, memory_id: int, reason: Optional[str] = None) -> bool:
+    async def delete_memory(self, memory_id: int, reason: Optional[str] = None) -> bool:
         """Delete a memory record."""
         return self.store.delete_memory(memory_id, reason)
     
-    def pin_memory(self, memory_id: int) -> bool:
+    async def pin_memory(self, memory_id: int) -> bool:
         """Pin a memory (prevent auto-deletion)."""
         memory = self.store.get_memory(memory_id)
         if memory:
@@ -143,7 +143,7 @@ class MemoryReview:
                 return True
         return False
     
-    def unpin_memory(self, memory_id: int) -> bool:
+    async def unpin_memory(self, memory_id: int) -> bool:
         """Unpin a memory."""
         memory = self.store.get_memory(memory_id)
         if memory:
@@ -160,19 +160,19 @@ class MemoryReview:
     # Auto-Memory Control
     # =========================================================================
     
-    def pause_auto_memory(self) -> bool:
+    async def pause_auto_memory(self) -> bool:
         """Pause auto-memory creation."""
         # Set control state to pause auto-memory
         self.store.set_control_state("auto_memory_paused", True)
         return True
     
-    def resume_auto_memory(self) -> bool:
+    async def resume_auto_memory(self) -> bool:
         """Resume auto-memory creation."""
         # Clear control state to resume auto-memory
         self.store.set_control_state("auto_memory_paused", False)
         return True
     
-    def get_auto_memory_status(self) -> Dict:
+    async def get_auto_memory_status(self) -> Dict:
         """Get auto-memory status."""
         paused = self.store.get_control_state("auto_memory_paused")
         return {
@@ -185,7 +185,7 @@ class MemoryReview:
     # Memory Policy
     # =========================================================================
     
-    def get_memory_policy(self) -> Dict:
+    async def get_memory_policy(self) -> Dict:
         """Get memory system policy."""
         return {
             "retention_period": "1 year",
@@ -281,3 +281,20 @@ class MemoryReview:
             "preference", "project", "workflow", "environment", 
             "schedule_pattern", "fact", "note"
         }
+
+
+_memory_review: Optional[MemoryReview] = None
+
+
+def get_memory_review() -> MemoryReview:
+    """Get or create the global memory review instance."""
+    global _memory_review
+    if _memory_review is None:
+        _memory_review = MemoryReview()
+    return _memory_review
+
+
+def set_memory_review(review: MemoryReview) -> None:
+    """Set the global memory review instance."""
+    global _memory_review
+    _memory_review = review

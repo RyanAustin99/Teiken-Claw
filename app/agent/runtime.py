@@ -19,7 +19,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from pydantic import BaseModel
 
@@ -33,7 +33,6 @@ from app.agent.errors import (
     is_retryable_error,
 )
 from app.agent.context_builder import ContextBuilder, get_context_builder
-from app.agent.result_formatter import format_response
 from app.queue.jobs import Job
 from app.tools.base import ToolResult
 from app.tools.registry import ToolRegistry, get_tool_registry
@@ -42,7 +41,6 @@ from app.tools.registry import ToolRegistry, get_tool_registry
 from app.memory.store import get_memory_store
 from app.memory.thread_state import get_thread_state
 from app.memory.extraction_rules import get_extraction_rules
-from app.agent.context_router import get_context_router
 
 logger = get_logger(__name__)
 
@@ -667,7 +665,7 @@ class AgentRuntime:
         )
         
         # Get user message
-        user_message = job.message
+        user_message = job.payload.get("text", "") or job.payload.get("message", "")
         if not user_message:
             return None
         
@@ -699,24 +697,26 @@ class AgentRuntime:
                 output = result.outputs.get("result", str(result.outputs))
                 return AgentResult(
                     ok=True,
-                    message=output,
-                    tool_calls=[],
+                    response=output,
+                    tool_calls=0,
                 )
             else:
                 return AgentResult(
                     ok=False,
-                    message=f"Skill error: {result.error}",
+                    response="",
+                    error=f"Skill error: {result.error}",
                     error_code="skill_error",
-                    tool_calls=[],
+                    tool_calls=0,
                 )
                 
         except Exception as e:
             logger.error(f"Skill execution error: {e}", exc_info=True)
             return AgentResult(
                 ok=False,
-                message=f"Skill execution failed: {str(e)}",
+                response="",
+                error=f"Skill execution failed: {str(e)}",
                 error_code="skill_execution_error",
-                tool_calls=[],
+                tool_calls=0,
             )
 
     async def _persist_user_message(self, job: Job) -> None:
@@ -736,11 +736,11 @@ class AgentRuntime:
             
             if not thread_id:
                 # Get current thread for session
-                thread_id = await thread_state.get_current_thread(session_id)
+                thread_id = thread_state.get_current_thread(session_id)
             
             if not thread_id:
                 # Create new thread
-                thread_id = await thread_state.create_new_thread(
+                thread_id = thread_state.create_new_thread(
                     session_id=session_id,
                     metadata={"source": job.source, "chat_id": job.chat_id}
                 )
@@ -749,8 +749,7 @@ class AgentRuntime:
             user_message = job.payload.get("text", "") or job.payload.get("message", "")
             
             # Append message to thread
-            await memory_store.append_message(
-                session_id=session_id,
+            memory_store.append_message(
                 thread_id=thread_id,
                 role="user",
                 content=user_message,
@@ -792,11 +791,10 @@ class AgentRuntime:
             thread_state = get_thread_state()
             
             session_id = job.session_id or f"chat:{job.chat_id}"
-            thread_id = job.thread_id or await thread_state.get_current_thread(session_id)
+            thread_id = job.thread_id or thread_state.get_current_thread(session_id)
             
             if thread_id:
-                await memory_store.append_message(
-                    session_id=session_id,
+                memory_store.append_message(
                     thread_id=thread_id,
                     role="assistant",
                     content=response,
@@ -837,7 +835,7 @@ class AgentRuntime:
             if job.thread_id:
                 return job.thread_id
             
-            return await thread_state.get_current_thread(session_id)
+            return thread_state.get_current_thread(session_id)
         except Exception:
             return None
     
@@ -908,7 +906,7 @@ class AgentRuntime:
                         continue
                     
                     # Create memory (embedding will be generated automatically)
-                    await memory_store.create_memory(
+                    memory_store.create_memory(
                         memory_type=candidate.get("memory_type") or candidate.get("category", "note"),
                         content=content,
                         tags=candidate.get("tags", []),
