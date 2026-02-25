@@ -34,6 +34,17 @@ from app.agent import (
     get_ollama_circuit_breaker,
     get_circuit_breaker_metrics,
     get_all_circuit_breaker_status,
+    get_agent_runtime,
+    set_agent_runtime,
+    AgentRuntime,
+)
+
+# Tool system imports
+from app.tools import (
+    get_tool_registry,
+    set_tool_registry,
+    ToolRegistry,
+    register_mock_tools,
 )
 
 # Queue system imports
@@ -57,6 +68,10 @@ _worker_pool: WorkerPool = None
 _rate_limiter: RateLimiter = None
 _outbound_queue: OutboundQueue = None
 
+# Global agent components
+_tool_registry: ToolRegistry = None
+_agent_runtime: AgentRuntime = None
+
 
 async def _initialize_queue_system() -> dict:
     """
@@ -69,11 +84,14 @@ async def _initialize_queue_system() -> dict:
     - RateLimiter
     - OutboundQueue
     - WorkerPool
+    - ToolRegistry
+    - AgentRuntime
     
     Returns:
         dict: Initialization status for each component
     """
     global _dispatcher, _lock_manager, _dead_letter_queue, _worker_pool, _rate_limiter, _outbound_queue
+    global _tool_registry, _agent_runtime
     
     status = {}
     
@@ -125,7 +143,26 @@ async def _initialize_queue_system() -> dict:
         set_outbound_queue(_outbound_queue)
         status["outbound_queue"] = "initialized"
         
-        # 6. Initialize Worker Pool
+        # 6. Initialize Tool Registry
+        logger.info("Initializing tool registry...")
+        _tool_registry = ToolRegistry()
+        set_tool_registry(_tool_registry)
+        
+        # Register mock tools for development
+        if settings.is_development():
+            logger.info("Registering mock tools for development...")
+            register_mock_tools(_tool_registry)
+        
+        status["tool_registry"] = "initialized"
+        status["tool_count"] = len(_tool_registry)
+        
+        # 7. Initialize Agent Runtime
+        logger.info("Initializing agent runtime...")
+        _agent_runtime = AgentRuntime(tool_registry=_tool_registry)
+        set_agent_runtime(_agent_runtime)
+        status["agent_runtime"] = "initialized"
+        
+        # 8. Initialize Worker Pool
         logger.info("Initializing worker pool...")
         _worker_pool = WorkerPool(
             dispatcher=_dispatcher,

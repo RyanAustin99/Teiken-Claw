@@ -7,6 +7,7 @@ This module provides:
 - Per-chat lock enforcement
 - Ollama concurrency semaphore
 - Graceful shutdown handling
+- Agent runtime integration for chat messages
 """
 
 import asyncio
@@ -20,6 +21,10 @@ from app.config.settings import settings
 from app.queue.jobs import Job, JobType
 from app.queue.dispatcher import JobDispatcher, get_dispatcher
 from app.queue.locks import LockManager, get_lock_manager
+
+# Agent runtime imports
+from app.agent.runtime import AgentRuntime, AgentResult, get_agent_runtime
+from app.agent.result_formatter import format_response
 
 logger = get_logger(__name__)
 
@@ -57,12 +62,14 @@ class WorkerPool:
     - Ollama concurrency limiting
     - Graceful shutdown support
     - Error handling and retry logic
+    - Agent runtime integration
     
     Attributes:
         num_workers: Number of worker tasks
         ollama_concurrency: Maximum concurrent Ollama calls
         workers: List of worker tasks
         status: Current pool status
+        agent_runtime: Agent runtime for processing chat messages
     """
     
     def __init__(
@@ -72,6 +79,7 @@ class WorkerPool:
         num_workers: int = 3,
         ollama_concurrency: int = 2,
         lock_timeout: int = 300,
+        agent_runtime: Optional[AgentRuntime] = None,
     ):
         """
         Initialize the worker pool.
@@ -82,12 +90,14 @@ class WorkerPool:
             num_workers: Number of worker tasks to spawn
             ollama_concurrency: Maximum concurrent Ollama API calls
             lock_timeout: Lock timeout in seconds
+            agent_runtime: AgentRuntime instance (uses global if None)
         """
         self.dispatcher = dispatcher or get_dispatcher()
         self.lock_manager = lock_manager or get_lock_manager()
         self.num_workers = num_workers
         self.ollama_concurrency = ollama_concurrency
         self.lock_timeout = lock_timeout
+        self.agent_runtime = agent_runtime  # Will be set later if None
         
         # Semaphore for Ollama concurrency
         self._ollama_semaphore = asyncio.Semaphore(ollama_concurrency)
@@ -107,10 +117,62 @@ class WorkerPool:
         self._total_jobs_processed = 0
         self._total_errors = 0
         
+        # Register default chat message handler
+        self._register_default_handlers()
+        
         logger.info(
             f"WorkerPool initialized: num_workers={num_workers}, ollama_concurrency={ollama_concurrency}",
             extra={"event": "worker_pool_initialized"}
         )
+    
+    def _register_default_handlers(self) -> None:
+        """Register default job handlers."""
+        self.register_handler(JobType.CHAT_MESSAGE, self._handle_chat_message)
+    
+    async def _handle_chat_message(self, job: Job) -> None:
+        """
+        Handle a chat message job using the agent runtime.
+        
+        Args:
+            job: Chat message job to process
+        """
+        # Get agent runtime if not set
+        runtime = self.agent_runtime or get_agent_runtime()
+        
+        # Run the agent
+        result: AgentResult = await runtime.run(job)
+        
+        # Log the result
+        logger.info(
+            f"Agent run completed: ok={result.ok}",
+            extra={
+                "event": "agent_run_complete",
+                "job_id": job.job_id,
+                "ok": result.ok,
+                "tool_calls": result.tool_calls,
+            }
+        )
+        
+        # TODO: Send response to outbound queue
+        # For now, just log the response
+        if result.ok:
+            logger.info(
+                f"Agent response: {result.response[:200]}...",
+                extra={
+                    "event": "agent_response",
+                    "job_id": job.job_id,
+                    "response_length": len(result.response),
+                }
+            )
+        else:
+            logger.warning(
+                f"Agent error: {result.error}",
+                extra={
+                    "event": "agent_error",
+                    "job_id": job.job_id,
+                    "error_code": result.error_code,
+                }
+            )
     
     def register_handler(self, job_type: JobType, handler: JobHandler) -> None:
         """

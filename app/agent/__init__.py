@@ -7,6 +7,9 @@ Contains the core agent implementation including:
 - Custom error classes for error handling
 - Retry utilities with exponential backoff
 - Circuit breaker for fault tolerance
+- Agent runtime with tool-calling loop
+- Context building and prompt management
+- Response formatting
 """
 
 # Ollama Client
@@ -68,6 +71,51 @@ from app.agent.circuit_breaker import (
     get_circuit_breaker_metrics,
 )
 
+# Agent Runtime
+from app.agent.runtime import (
+    AgentRuntime,
+    AgentResult,
+    ToolCallRecord,
+    MAX_TOOL_TURNS,
+    MAX_RETRIES,
+    get_agent_runtime,
+    set_agent_runtime,
+    reset_agent_runtime,
+)
+
+# Prompts
+from app.agent.prompts import (
+    DEFAULT_SYSTEM_PROMPT,
+    MODE_PROMPTS,
+    build_system_prompt,
+    build_tool_prompt,
+    build_context_prompt,
+    format_message_for_prompt,
+    build_tool_result_message,
+)
+
+# Context Builder
+from app.agent.context_builder import (
+    ContextBuilder,
+    DEFAULT_MAX_TOKENS,
+    DEFAULT_RESERVED_TOKENS,
+    get_context_builder,
+)
+
+# Result Formatter
+from app.agent.result_formatter import (
+    TELEGRAM_MAX_LENGTH,
+    CLI_MAX_LENGTH,
+    DEFAULT_CHUNK_SIZE,
+    format_response,
+    format_for_telegram,
+    format_for_cli,
+    chunk_response,
+    format_tool_result_for_display,
+    format_error_response,
+    extract_code_blocks,
+)
+
 __all__ = [
     # Ollama Client
     "OllamaClient",
@@ -116,4 +164,37 @@ __all__ = [
     "reset_ollama_circuit_breaker",
     "get_all_circuit_breaker_status",
     "get_circuit_breaker_metrics",
+    # Agent Runtime
+    "AgentRuntime",
+    "AgentResult",
+    "ToolCallRecord",
+    "MAX_TOOL_TURNS",
+    "MAX_RETRIES",
+    "get_agent_runtime",
+    "set_agent_runtime",
+    "reset_agent_runtime",
+    # Prompts
+    "DEFAULT_SYSTEM_PROMPT",
+    "MODE_PROMPTS",
+    "build_system_prompt",
+    "build_tool_prompt",
+    "build_context_prompt",
+    "format_message_for_prompt",
+    "build_tool_result_message",
+    # Context Builder
+    "ContextBuilder",
+    "DEFAULT_MAX_TOKENS",
+    "DEFAULT_RESERVED_TOKENS",
+    "get_context_builder",
+    # Result Formatter
+    "TELEGRAM_MAX_LENGTH",
+    "CLI_MAX_LENGTH",
+    "DEFAULT_CHUNK_SIZE",
+    "format_response",
+    "format_for_telegram",
+    "format_for_cli",
+    "chunk_response",
+    "format_tool_result_for_display",
+    "format_error_response",
+    "extract_code_blocks",
 ]
