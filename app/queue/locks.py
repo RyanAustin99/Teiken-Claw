@@ -147,16 +147,18 @@ class LockManager:
         Raises:
             LockTimeoutError: If lock cannot be acquired within timeout
         """
-        timeout = timeout or self.default_timeout
+        timeout = self.default_timeout if timeout is None else timeout
         lock = await self._get_or_create_chat_lock(chat_id)
         lock_id = self._generate_lock_id("chat", chat_id)
         
         # Try to acquire the lock with timeout
         try:
-            acquired = await asyncio.wait_for(
-                lock.acquire(),
-                timeout=timeout
-            )
+            if timeout <= 0:
+                if lock.locked():
+                    raise asyncio.TimeoutError()
+                await lock.acquire()
+            else:
+                await asyncio.wait_for(lock.acquire(), timeout=timeout)
         except asyncio.TimeoutError:
             logger.warning(
                 f"Failed to acquire chat lock: {chat_id} (timeout after {timeout}s)",
@@ -230,16 +232,18 @@ class LockManager:
         Raises:
             LockTimeoutError: If lock cannot be acquired within timeout
         """
-        timeout = timeout or self.default_timeout
+        timeout = self.default_timeout if timeout is None else timeout
         lock = await self._get_or_create_session_lock(session_id)
         lock_id = self._generate_lock_id("session", session_id)
         
         # Try to acquire the lock with timeout
         try:
-            acquired = await asyncio.wait_for(
-                lock.acquire(),
-                timeout=timeout
-            )
+            if timeout <= 0:
+                if lock.locked():
+                    raise asyncio.TimeoutError()
+                await lock.acquire()
+            else:
+                await asyncio.wait_for(lock.acquire(), timeout=timeout)
         except asyncio.TimeoutError:
             logger.warning(
                 f"Failed to acquire session lock: {session_id} (timeout after {timeout}s)",

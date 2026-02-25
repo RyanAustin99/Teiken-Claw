@@ -272,6 +272,21 @@ class TelegramSender:
             bool: True if all chunks sent successfully
         """
         chunks = self._split_message(text)
+
+        # Placeholder mode: emulate successful chunked send without Bot API.
+        if not HAS_TELEGRAM or not self._bot:
+            self._total_chunks += len(chunks)
+            self._total_sent += len(chunks)
+            logger.warning(
+                f"[PLACEHOLDER] Would send {len(chunks)} chunks to chat {chat_id}",
+                extra={
+                    "event": "sender_chunked_placeholder",
+                    "chat_id": chat_id,
+                    "chunk_count": len(chunks),
+                }
+            )
+            return True
+
         all_success = True
         
         for i, chunk in enumerate(chunks):
