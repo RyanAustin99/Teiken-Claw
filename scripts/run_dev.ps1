@@ -76,10 +76,10 @@ $PythonExe = Join-Path $VenvPath "Scripts\python.exe"
 # Check for uvicorn availability and use it for better dev experience
 $UvicornCheck = & $PythonExe -c "import uvicorn" 2>&1
 if ($LASTEXITCODE -eq 0) {
-    Write-Info "Using uvicorn for hot reload"
+    Write-Host "       Using uvicorn for hot reload" -ForegroundColor Gray
     $Command = @($PythonExe, "-m", "uvicorn", "app.main:app", "--reload", "--host", "0.0.0.0", "--port", $Port)
 } else {
-    Write-Info "Using direct Python execution"
+    Write-Host "       Using direct Python execution" -ForegroundColor Gray
     $Command = @($PythonExe, $AppMain, "--port", $Port)
 }
 
