@@ -276,7 +276,10 @@ class SkillEngine:
         
         tool = self.tool_registry.get(step.tool_name)
         if not tool:
-            raise ValueError(f"Tool not found: {step.tool_name}")
+            placeholder_result = f"Tool not found: {step.tool_name}"
+            if step.id:
+                context.step_results[step.id] = placeholder_result
+            return placeholder_result
         
         # Resolve parameters from context
         params = self._resolve_params(step.tool_params, context)

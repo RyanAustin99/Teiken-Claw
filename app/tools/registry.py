@@ -44,6 +44,14 @@ class ToolRegistry:
         """Initialize an empty tool registry."""
         self._tools: Dict[str, Tool] = {}
         logger.debug("ToolRegistry initialized")
+
+    @staticmethod
+    def _tool_key(tool: Tool) -> str:
+        """Resolve the registry key for a tool, honoring explicit overrides."""
+        override = getattr(tool, "_name", None)
+        if isinstance(override, str) and override.strip():
+            return override.strip()
+        return tool.name
     
     def register(self, tool: Tool) -> None:
         """
@@ -55,16 +63,18 @@ class ToolRegistry:
         Raises:
             ValueError: If a tool with the same name already exists
         """
-        if tool.name in self._tools:
+        tool_key = self._tool_key(tool)
+
+        if tool_key in self._tools:
             logger.warning(
-                f"Overwriting existing tool: {tool.name}",
-                extra={"event": "tool_overwrite", "tool_name": tool.name}
+                f"Overwriting existing tool: {tool_key}",
+                extra={"event": "tool_overwrite", "tool_name": tool_key}
             )
         
-        self._tools[tool.name] = tool
+        self._tools[tool_key] = tool
         logger.info(
-            f"Registered tool: {tool.name}",
-            extra={"event": "tool_registered", "tool_name": tool.name}
+            f"Registered tool: {tool_key}",
+            extra={"event": "tool_registered", "tool_name": tool_key}
         )
     
     def unregister(self, name: str) -> bool:
@@ -96,7 +106,15 @@ class ToolRegistry:
         Returns:
             Tool instance or None if not found
         """
-        return self._tools.get(name)
+        tool = self._tools.get(name)
+        if tool is not None:
+            return tool
+
+        # Backward-compatible lookup by runtime tool.name value.
+        for candidate in self._tools.values():
+            if candidate.name == name:
+                return candidate
+        return None
     
     def get_all(self) -> List[Tool]:
         """
@@ -318,7 +336,7 @@ class ToolRegistry:
     
     def __contains__(self, name: str) -> bool:
         """Check if a tool is registered."""
-        return name in self._tools
+        return self.get(name) is not None
     
     def __repr__(self) -> str:
         return f"<ToolRegistry tools={len(self._tools)}>"

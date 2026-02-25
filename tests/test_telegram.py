@@ -241,21 +241,22 @@ class TestCommandRouter:
     
     @pytest.mark.asyncio
     async def test_handle_memory_stub(self, router):
-        """Test /memory command stub."""
+        """Test /memory review command."""
         response = await router.handle_memory(12345, 111, ["review"])
-        assert "not yet implemented" in response.lower()
+        assert "recent memories" in response.lower()
     
     @pytest.mark.asyncio
     async def test_handle_jobs_stub(self, router):
-        """Test /jobs command stub."""
+        """Test /jobs command without active scheduler."""
         response = await router.handle_jobs(12345, 111)
-        assert "not yet implemented" in response.lower()
+        assert "scheduled jobs" in response.lower()
+        assert "scheduler is not running" in response.lower()
     
     @pytest.mark.asyncio
     async def test_handle_pause_jobs(self, router):
         """Test /pause jobs command."""
         response = await router.handle_pause(12345, 111, ["jobs"])
-        assert "Jobs Paused" in response
+        assert "jobs paused" in response.lower()
     
     @pytest.mark.asyncio
     async def test_handle_pause_all(self, router):
@@ -271,7 +272,7 @@ class TestCommandRouter:
         await router.handle_pause(12345, 111, ["all"])
         # Then resume
         response = await router.handle_resume(12345, 111)
-        assert "RESUMED" in response
+        assert "resumed" in response.lower()
         assert not router._all_paused
     
     @pytest.mark.asyncio

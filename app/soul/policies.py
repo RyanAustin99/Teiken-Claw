@@ -63,6 +63,9 @@ class SoulPolicyManager:
                 "response_style": "detailed",
                 "include_reasoning": True,
                 "include_alternatives": True,
+                "max_iterations": 20,
+                "timeout_seconds": 600,
+                "phased_output": True,
                 "output_format_rules": {
                     "use_markdown": True,
                     "include_line_numbers": True,
