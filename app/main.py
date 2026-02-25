@@ -6,6 +6,7 @@ This module provides the FastAPI application with:
 - Database initialization
 - Health check endpoints
 - API routes
+- Queue system lifecycle management
 """
 
 import logging
@@ -27,10 +28,206 @@ from app.config.constants import (
 )
 from app.db import init_db, verify_db, dispose_engine
 
+# Queue system imports
+from app.queue.dispatcher import JobDispatcher, set_dispatcher
+from app.queue.workers import WorkerPool, set_worker_pool
+from app.queue.locks import LockManager, set_lock_manager
+from app.queue.throttles import RateLimiter, OutboundQueue, set_rate_limiter, set_outbound_queue
+from app.queue.dead_letter import DeadLetterQueue, set_dead_letter_queue
+
 
 # Configure logging before app creation
 setup_logging()
 logger = get_logger(__name__)
+
+
+# Global queue components
+_dispatcher: JobDispatcher = None
+_lock_manager: LockManager = None
+_dead_letter_queue: DeadLetterQueue = None
+_worker_pool: WorkerPool = None
+_rate_limiter: RateLimiter = None
+_outbound_queue: OutboundQueue = None
+
+
+async def _initialize_queue_system() -> dict:
+    """
+    Initialize the queue system components.
+    
+    Creates and connects:
+    - DeadLetterQueue
+    - LockManager
+    - JobDispatcher
+    - RateLimiter
+    - OutboundQueue
+    - WorkerPool
+    
+    Returns:
+        dict: Initialization status for each component
+    """
+    global _dispatcher, _lock_manager, _dead_letter_queue, _worker_pool, _rate_limiter, _outbound_queue
+    
+    status = {}
+    
+    try:
+        # 1. Initialize Dead-Letter Queue
+        logger.info("Initializing dead-letter queue...")
+        _dead_letter_queue = DeadLetterQueue()
+        set_dead_letter_queue(_dead_letter_queue)
+        status["dead_letter_queue"] = "initialized"
+        
+        # 2. Initialize Lock Manager
+        logger.info("Initializing lock manager...")
+        _lock_manager = LockManager(default_timeout=settings.LOCK_TIMEOUT_SEC)
+        set_lock_manager(_lock_manager)
+        status["lock_manager"] = "initialized"
+        
+        # 3. Initialize Job Dispatcher
+        logger.info("Initializing job dispatcher...")
+        _dispatcher = JobDispatcher(
+            max_size=settings.QUEUE_MAX_SIZE,
+            idempotency_ttl_seconds=settings.IDEMPOTENCY_TTL_SEC,
+            dead_letter_queue=_dead_letter_queue,
+        )
+        set_dispatcher(_dispatcher)
+        status["dispatcher"] = "initialized"
+        
+        # Connect dispatcher to dead-letter queue for replay
+        _dead_letter_queue.set_dispatcher(_dispatcher)
+        
+        # 4. Initialize Rate Limiter
+        logger.info("Initializing rate limiter...")
+        _rate_limiter = RateLimiter(
+            global_rate=settings.TELEGRAM_GLOBAL_MSG_PER_SEC,
+            per_chat_rate=settings.TELEGRAM_PER_CHAT_MSG_PER_SEC,
+        )
+        set_rate_limiter(_rate_limiter)
+        status["rate_limiter"] = "initialized"
+        
+        # 5. Initialize Outbound Queue
+        logger.info("Initializing outbound queue...")
+        _outbound_queue = OutboundQueue(
+            rate_limiter=_rate_limiter,
+            global_rate=settings.TELEGRAM_GLOBAL_MSG_PER_SEC,
+            per_chat_rate=settings.TELEGRAM_PER_CHAT_MSG_PER_SEC,
+            max_queue_size=settings.QUEUE_MAX_SIZE,
+            max_attempts=settings.JOB_MAX_ATTEMPTS,
+            dead_letter_queue=_dead_letter_queue,
+        )
+        set_outbound_queue(_outbound_queue)
+        status["outbound_queue"] = "initialized"
+        
+        # 6. Initialize Worker Pool
+        logger.info("Initializing worker pool...")
+        _worker_pool = WorkerPool(
+            dispatcher=_dispatcher,
+            lock_manager=_lock_manager,
+            num_workers=settings.WORKER_COUNT,
+            ollama_concurrency=settings.OLLAMA_MAX_CONCURRENCY,
+            lock_timeout=settings.LOCK_TIMEOUT_SEC,
+        )
+        set_worker_pool(_worker_pool)
+        status["worker_pool"] = "initialized"
+        
+        logger.info(
+            "Queue system initialized",
+            extra={"event": "queue_system_initialized", "status": status}
+        )
+        
+    except Exception as e:
+        logger.error(
+            f"Failed to initialize queue system: {e}",
+            extra={"event": "queue_system_init_error"},
+            exc_info=True,
+        )
+        raise
+    
+    return status
+
+
+async def _start_queue_workers() -> dict:
+    """
+    Start the queue workers and outbound sender.
+    
+    Returns:
+        dict: Status of each started component
+    """
+    status = {}
+    
+    try:
+        # Start worker pool
+        if _worker_pool:
+            logger.info(f"Starting worker pool with {settings.WORKER_COUNT} workers...")
+            await _worker_pool.start()
+            status["worker_pool"] = "started"
+        
+        # Start outbound sender
+        if _outbound_queue:
+            logger.info("Starting outbound queue sender...")
+            await _outbound_queue.start_sender()
+            status["outbound_queue"] = "started"
+        
+        logger.info(
+            "Queue workers started",
+            extra={"event": "queue_workers_started", "status": status}
+        )
+        
+    except Exception as e:
+        logger.error(
+            f"Failed to start queue workers: {e}",
+            extra={"event": "queue_workers_start_error"},
+            exc_info=True,
+        )
+        raise
+    
+    return status
+
+
+async def _stop_queue_workers() -> dict:
+    """
+    Stop the queue workers and outbound sender gracefully.
+    
+    Returns:
+        dict: Status of each stopped component
+    """
+    status = {}
+    
+    # Stop worker pool first
+    if _worker_pool:
+        try:
+            logger.info("Stopping worker pool...")
+            await _worker_pool.stop(timeout=30.0)
+            status["worker_pool"] = "stopped"
+        except Exception as e:
+            logger.error(f"Error stopping worker pool: {e}", exc_info=True)
+            status["worker_pool"] = f"error: {e}"
+    
+    # Stop outbound sender
+    if _outbound_queue:
+        try:
+            logger.info("Stopping outbound queue sender...")
+            await _outbound_queue.stop_sender(timeout=30.0)
+            status["outbound_queue"] = "stopped"
+        except Exception as e:
+            logger.error(f"Error stopping outbound queue: {e}", exc_info=True)
+            status["outbound_queue"] = f"error: {e}"
+    
+    # Shutdown dispatcher
+    if _dispatcher:
+        try:
+            logger.info("Shutting down dispatcher...")
+            await _dispatcher.shutdown(wait=True)
+            status["dispatcher"] = "shutdown"
+        except Exception as e:
+            logger.error(f"Error shutting down dispatcher: {e}", exc_info=True)
+            status["dispatcher"] = f"error: {e}"
+    
+    logger.info(
+        "Queue workers stopped",
+        extra={"event": "queue_workers_stopped", "status": status}
+    )
+    
+    return status
 
 
 @asynccontextmanager
@@ -39,8 +236,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     Application lifespan context manager.
     
     Handles startup and shutdown events:
-    - Startup: Initialize database, create directories, apply PRAGMAs
-    - Shutdown: Dispose database engine, cleanup resources
+    - Startup: Initialize database, create directories, apply PRAGMAs, start queue system
+    - Shutdown: Stop queue workers, dispose database engine, cleanup resources
     """
     # Startup
     set_component("lifespan")
@@ -77,6 +274,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 extra={"event": "database_verified"}
             )
         
+        # Initialize queue system
+        logger.info("Initializing queue system...")
+        queue_status = await _initialize_queue_system()
+        logger.info(
+            f"Queue system initialized: {queue_status}",
+            extra={"event": "queue_system_ready"}
+        )
+        
+        # Start queue workers
+        logger.info("Starting queue workers...")
+        workers_status = await _start_queue_workers()
+        logger.info(
+            f"Queue workers started: {workers_status}",
+            extra={"event": "queue_workers_ready"}
+        )
+        
         logger.info(
             f"{settings.APP_NAME} startup complete",
             extra={"event": "startup_complete"}
@@ -99,8 +312,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         extra={"event": EVENT_APP_SHUTDOWN}
     )
     
+    # Stop queue workers
     try:
-        # Dispose database engine
+        await _stop_queue_workers()
+    except Exception as e:
+        logger.error(
+            f"Error stopping queue workers: {e}",
+            extra={"event": "queue_shutdown_error"},
+            exc_info=True
+        )
+    
+    # Dispose database engine
+    try:
         await dispose_engine()
         logger.info(
             "Database engine disposed",
@@ -184,7 +407,7 @@ async def readiness_check() -> dict:
     """
     Readiness check endpoint.
     
-    Verifies database connectivity and returns detailed status.
+    Verifies database connectivity and queue system status.
     
     Returns:
         dict: Readiness status with component details.
@@ -207,6 +430,37 @@ async def readiness_check() -> dict:
             "error": str(e),
         }
         overall_status = "unhealthy"
+    
+    # Check queue system
+    if _dispatcher:
+        components["queue"] = {
+            "status": "healthy" if not _dispatcher.is_shutdown else "shutdown",
+            "queue_depth": _dispatcher.queue_depth,
+            "pending_count": _dispatcher.pending_count,
+        }
+    else:
+        components["queue"] = {"status": "not_initialized"}
+        overall_status = "degraded"
+    
+    # Check worker pool
+    if _worker_pool:
+        worker_status = _worker_pool.get_status()
+        components["workers"] = {
+            "status": "healthy" if worker_status["running"] else "stopped",
+            "active_workers": worker_status["active_workers"],
+            "total_jobs_processed": worker_status["total_jobs_processed"],
+        }
+    else:
+        components["workers"] = {"status": "not_initialized"}
+    
+    # Check outbound queue
+    if _outbound_queue:
+        components["outbound"] = {
+            "status": "healthy" if _outbound_queue.is_running else "stopped",
+            "queue_depth": _outbound_queue.queue_depth,
+        }
+    else:
+        components["outbound"] = {"status": "not_initialized"}
     
     return {
         "status": overall_status,
@@ -250,6 +504,51 @@ async def get_status() -> dict:
             "telegram_enabled": settings.ENABLE_TELEGRAM,
             "memory_enabled": settings.AUTO_MEMORY_ENABLED,
         },
+    }
+
+
+@app.get("/api/v1/queue/status", tags=["api"])
+async def get_queue_status() -> dict:
+    """
+    Get queue system status.
+    
+    Returns:
+        dict: Detailed queue system status.
+    """
+    status = {
+        "dispatcher": _dispatcher.get_stats() if _dispatcher else None,
+        "workers": _worker_pool.get_status() if _worker_pool else None,
+        "outbound": _outbound_queue.get_stats() if _outbound_queue else None,
+        "locks": _lock_manager.get_lock_count() if _lock_manager else None,
+        "dead_letter": _dead_letter_queue.get_stats() if _dead_letter_queue else None,
+    }
+    
+    return status
+
+
+@app.get("/api/v1/queue/dead-letter", tags=["api"])
+async def list_dead_letter(limit: int = 50, offset: int = 0) -> dict:
+    """
+    List dead-letter queue entries.
+    
+    Args:
+        limit: Maximum number of entries to return
+        offset: Number of entries to skip
+    
+    Returns:
+        dict: List of dead-letter entries
+    """
+    if not _dead_letter_queue:
+        return {"error": "Dead-letter queue not initialized", "entries": []}
+    
+    entries = await _dead_letter_queue.list(limit=limit, offset=offset)
+    count = await _dead_letter_queue.count()
+    
+    return {
+        "entries": entries,
+        "total": count,
+        "limit": limit,
+        "offset": offset,
     }
 
 

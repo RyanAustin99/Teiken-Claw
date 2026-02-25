@@ -4,7 +4,7 @@
 
 ## Last Updated: 2026-02-25
 
-## Current Phase: Phase 1 Complete
+## Current Phase: Phase 2 Complete
 
 ---
 
@@ -26,21 +26,27 @@
 - Enhanced settings and constants
 - Application lifecycle hooks
 
-### 🔄 Phase 2: Core Agent Implementation (NEXT)
+### ✅ Phase 2: Queue, Workers, Throttles, Dead-Letter (COMPLETE)
+- Job models with priority system
+- Priority-based dispatcher with idempotency
+- Worker pool with Ollama concurrency control
+- Per-chat and per-session locks
+- Rate limiting (global and per-chat)
+- Outbound queue for Telegram messages
+- Dead-letter queue for failed jobs
+- Full application integration
+- Comprehensive test suite
+
+### 🔄 Phase 3: Core Agent Implementation (NEXT)
 - Ollama client integration
 - Agent core logic
 - Tool execution framework
 - Memory system implementation
 
-### ⏳ Phase 3: Memory & State Management (PLANNED)
-- Memory extraction and storage
-- Embedding generation
-- Memory retrieval and ranking
-
 ### ⏳ Phase 4: Interface Layer (PLANNED)
 - Telegram bot integration
 - CLI interface
-- Rate limiting
+- Full rate limiting integration
 
 ### ⏳ Phase 5: Testing & Documentation (PLANNED)
 - Unit tests
@@ -74,7 +80,10 @@ None at this time.
 
 - Database: SQLite with WAL mode
 - Logging: Structured JSON with rotation
-- Startup time: < 2 seconds (estimated)
+- Queue: In-memory priority queue (max 1000 jobs)
+- Workers: 3 concurrent workers (configurable)
+- Rate Limiting: 30 msg/sec global, 1 msg/sec per chat
+- Startup time: < 3 seconds (estimated)
 
 ---
 
@@ -84,3 +93,48 @@ None at this time.
 - No secrets in version control
 - Admin chat IDs for privileged operations
 - Executable allowlist for code execution tools
+- Lock timeouts prevent deadlocks
+- Idempotency keys prevent duplicate processing
+
+---
+
+## Queue System Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      Job Sources                             │
+│  Telegram │ CLI │ API │ Scheduler │ Subagent │ Internal    │
+└───────────────────────────┬─────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   JobDispatcher                              │
+│  - Priority Queue (asyncio.PriorityQueue)                   │
+│  - Idempotency Key Deduplication                            │
+│  - Queue Backpressure (max 1000)                            │
+└───────────────────────────┬─────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│                     WorkerPool                               │
+│  - 3 Workers (configurable)                                  │
+│  - Per-Chat Lock Enforcement                                │
+│  - Ollama Concurrency Semaphore (max 2)                     │
+└───────────────────────────┬─────────────────────────────────┘
+                            │
+              ┌─────────────┴─────────────┐
+              │                           │
+              ▼                           ▼
+┌─────────────────────────┐   ┌─────────────────────────────┐
+│    Job Processing       │   │      OutboundQueue          │
+│    (Handlers)           │   │  - Rate Limiting            │
+│                         │   │  - Retry Logic              │
+└───────────┬─────────────┘   │  - 429 Handling             │
+            │                 └───────────┬─────────────────┘
+            │                             │
+            ▼                             ▼
+┌─────────────────────────┐   ┌─────────────────────────────┐
+│    Dead-Letter Queue    │   │      Telegram API           │
+│    (Failed Jobs)        │   │      (Future)               │
+└─────────────────────────┘   └─────────────────────────────┘
+```
