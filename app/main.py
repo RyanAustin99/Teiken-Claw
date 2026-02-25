@@ -119,6 +119,16 @@ from app.subagents.manager import SubAgentManager, get_subagent_manager, set_sub
 from app.subagents.executor import SubAgentExecutor, get_subagent_executor, set_subagent_executor
 from app.subagents.summarizer import SubAgentSummarizer, get_subagent_summarizer, set_subagent_summarizer
 
+# Phase 13: Observability imports
+from app.observability.metrics import MetricsCollector, get_metrics_collector, set_metrics_collector
+from app.observability.audit import AuditLogger, get_audit_logger, set_audit_logger
+from app.observability.traces import TraceManager, get_trace_manager, set_trace_manager
+
+# Phase 13: API imports
+from app.api.routes_health import router as health_router, set_health_dependencies
+from app.api.routes_status import router as status_router, set_status_dependencies
+from app.api.routes_admin import router as admin_router, set_admin_dependencies
+
 
 # Configure logging before app creation
 setup_logging()
@@ -173,6 +183,11 @@ _subagent_summarizer: SubAgentSummarizer = None
 # Phase 12: Global soul components
 _soul_config: SoulConfig = None
 _soul_policy_manager: SoulPolicyManager = None
+
+# Phase 13: Global observability components
+_metrics_collector: MetricsCollector = None
+_audit_logger: AuditLogger = None
+_trace_manager: TraceManager = None
 
 
 async def _initialize_queue_system() -> dict:
@@ -635,6 +650,66 @@ async def _stop_queue_workers() -> dict:
     return status
 
 
+def _initialize_observability() -> None:
+    """
+    Initialize observability components.
+    
+    Creates and sets:
+    - MetricsCollector
+    - AuditLogger
+    - TraceManager
+    - Route dependencies
+    """
+    global _metrics_collector, _audit_logger, _trace_manager
+    
+    # Initialize metrics collector
+    _metrics_collector = MetricsCollector(enabled=settings.METRICS_ENABLED)
+    set_metrics_collector(_metrics_collector)
+    
+    # Initialize audit logger
+    _audit_logger = AuditLogger(enabled=settings.AUDIT_ENABLED)
+    set_audit_logger(_audit_logger)
+    
+    # Initialize trace manager
+    _trace_manager = TraceManager(enabled=settings.TRACING_ENABLED)
+    set_trace_manager(_trace_manager)
+    
+    # Set route dependencies
+    set_health_dependencies(
+        dispatcher=_dispatcher,
+        worker_pool=_worker_pool,
+        outbound_queue=_outbound_queue,
+        scheduler_service=_scheduler_service,
+        control_state_manager=_control_state_manager,
+        dead_letter_queue=_dead_letter_queue,
+    )
+    
+    set_status_dependencies(
+        dispatcher=_dispatcher,
+        worker_pool=_worker_pool,
+        outbound_queue=_outbound_queue,
+        lock_manager=_lock_manager,
+        dead_letter_queue=_dead_letter_queue,
+        scheduler_service=_scheduler_service,
+        control_state_manager=_control_state_manager,
+    )
+    
+    set_admin_dependencies(
+        control_state_manager=_control_state_manager,
+        dead_letter_queue=_dead_letter_queue,
+        dispatcher=_dispatcher,
+    )
+    
+    logger.info(
+        "Observability components initialized",
+        extra={
+            "metrics_enabled": settings.METRICS_ENABLED,
+            "audit_enabled": settings.AUDIT_ENABLED,
+            "tracing_enabled": settings.TRACING_ENABLED,
+        }
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
@@ -693,6 +768,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.info(
             f"Queue workers started: {workers_status}",
             extra={"event": "queue_workers_ready"}
+        )
+        
+        # Initialize observability components (Phase 13)
+        logger.info("Initializing observability components...")
+        _initialize_observability()
+        logger.info(
+            "Observability initialized",
+            extra={"event": "observability_ready"}
         )
         
         logger.info(
@@ -776,6 +859,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Register API routers (Phase 13: Observability)
+app.include_router(health_router)
+app.include_router(status_router)
+app.include_router(admin_router)
 
 
 # =============================================================================
