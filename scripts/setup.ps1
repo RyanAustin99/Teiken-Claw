@@ -5,6 +5,8 @@
 param(
     [switch]$SkipOllama = $false,
     [switch]$SkipSmokeTest = $false,
+    [switch]$NoStart = $false,
+    [switch]$NoUi = $false,
     [switch]$Verbose = $false
 )
 
@@ -141,6 +143,14 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
+# Install editable package for native `teiken` command
+& $PythonVenvExecutable -m pip install -e . 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Write-Warn "Editable install failed; fallback launcher scripts still available"
+} else {
+    Write-Success "Installed package entrypoints (teiken)"
+}
+
 Write-Success "Dependencies installed"
 
 # ==============================================================================
@@ -170,7 +180,7 @@ if (-not (Test-Path $EnvExample)) {
 } else {
     Copy-Item $EnvExample $EnvFile
     Write-Success "Created .env from .env.example"
-    Write-Warn "Please edit .env and configure your settings"
+    Write-Info "Terminal wizard will handle configuration on first launch"
 }
 
 # ==============================================================================
@@ -259,9 +269,31 @@ Write-Host "===============================================" -ForegroundColor Ma
 Write-Host "  Setup Complete!" -ForegroundColor Green
 Write-Host "===============================================" -ForegroundColor Magenta
 Write-Host ""
-Write-Host "Next steps:" -ForegroundColor White
-Write-Host "  1. Edit .env and configure your settings" -ForegroundColor Gray
-Write-Host "  2. Run: .\scripts\run_dev.ps1" -ForegroundColor Gray
+Write-Host "Config Path: $env:LOCALAPPDATA\TeikenClaw\config\user_config.json" -ForegroundColor Gray
+Write-Host "Logs Path:   $env:LOCALAPPDATA\TeikenClaw\logs" -ForegroundColor Gray
+Write-Host ""
+
+if (-not $NoStart) {
+    Write-Step "Starting development server in a new shell..."
+    $RunDevScript = Join-Path $ProjectRoot "scripts\run_dev.ps1"
+    if (Test-Path $RunDevScript) {
+        Start-Process powershell -ArgumentList "-ExecutionPolicy Bypass -File `"$RunDevScript`"" -WorkingDirectory $ProjectRoot | Out-Null
+        Write-Success "Development server launch requested"
+    } else {
+        Write-Warn "run_dev.ps1 not found; skipping server start"
+    }
+} else {
+    Write-Info "Skipping dev server start (--NoStart)"
+}
+
+if (-not $NoUi) {
+    Write-Step "Launching Teiken control plane..."
+    & $PythonVenv -m app.control_plane.entrypoint
+} else {
+    Write-Info "Skipping terminal UI launch (--NoUi)"
+    Write-Host "Run later: teiken" -ForegroundColor Gray
+}
+
 Write-Host ""
 Write-Host "Optional:" -ForegroundColor White
 Write-Host "  - Install as Windows service: .\scripts\install_service.ps1" -ForegroundColor Gray

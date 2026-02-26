@@ -32,3 +32,25 @@ Teiken Claw exposes HTTP endpoints via FastAPI.
 
 - Most write/admin operations assume trusted local deployment.
 - Telegram command surfaces map to the same scheduler/control contracts used by HTTP routes.
+- The terminal control plane (`teiken`) does **not** require FastAPI to be up for `status`, `doctor`, config, model, or agent registry operations.
+- Dev-server lifecycle is supervised via control-plane runtime process management (`start/stop/restart/attach`).
+
+## Terminal Control Plane
+
+Top-level command interface:
+
+- `teiken`
+- `teiken status`
+- `teiken doctor`
+- `teiken models`
+- `teiken config`
+- `teiken hatch`
+- `teiken agents`
+- `teiken chat`
+- `teiken logs`
+- `teiken logs --audit`
+- `teiken open`
+- `teiken reset`
+- `teiken upgrade`
+- `teiken version`
+- `teiken --details <command>` for expanded error details

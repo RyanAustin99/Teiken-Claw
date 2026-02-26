@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "teiken-claw"
+version = "1.20.0"
+description = "Teiken Claw terminal-first AI control plane"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+teiken = "app.control_plane.entrypoint:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+

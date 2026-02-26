@@ -1,0 +1,40 @@
+name: Control Plane CI
+
+on:
+  push:
+    branches:
+      - main
+      - feat/1.20.0-terminal-control-plane
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  control-plane:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .
+
+      - name: Run control-plane tests
+        shell: pwsh
+        run: |
+          python -m pytest -q tests/control_plane tests/test_app.py
+
+      - name: Run control-plane E2E smoke
+        shell: pwsh
+        run: |
+          powershell -ExecutionPolicy Bypass -File scripts/e2e_control_plane.ps1 -SkipOllamaDependent
+

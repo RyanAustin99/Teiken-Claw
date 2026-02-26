@@ -1,37 +1,55 @@
 # Configuration Guide
 
-Teiken Claw configuration is loaded from environment variables (typically via `.env`).
+Teiken Claw 1.20.0 uses a layered terminal-managed configuration model:
 
-## Startup
+1. CLI `--data-dir` (for path override only)
+2. Environment variables
+3. Local persisted config (`config/user_config.json`)
+4. Built-in defaults
 
-- Copy `.env.example` to `.env`
-- Set required values before running `scripts/run_dev.ps1`
+## Base Path Resolution
 
-## Common Settings
+Base path precedence:
 
-- `APP_NAME` / `APP_VERSION` - Service metadata
-- `ENVIRONMENT` - Deployment mode (`dev`, `staging`, `prod`)
-- `DATABASE_URL` - SQLAlchemy connection string
-- `TELEGRAM_BOT_TOKEN` - Telegram bot auth token
-- `ADMIN_CHAT_IDS` - Comma-separated Telegram admin chat IDs
+1. `--data-dir`
+2. `TEIKEN_HOME`
+3. `%LOCALAPPDATA%\TeikenClaw`
 
-## Ollama
+All control-plane storage derives from that base path.
 
-- `OLLAMA_BASE_URL` - Ollama endpoint (default local)
-- `OLLAMA_CHAT_MODEL` - Default chat model
-- `OLLAMA_EMBED_MODEL` - Default embedding model
-- `OLLAMA_TIMEOUT_SEC` - Request timeout
+## Storage Split
 
-## Scheduler
+- `config/` - small human-editable JSON, non-secret settings
+- `state/` - durable state DB (agents, sessions, metadata)
+- `run/` - lock and pid files
+- `exports/` - doctor/log bundles
+- `logs/` - runtime logs
 
-- `SCHEDULER_ENABLED` - Enables APScheduler/control-state stack
+## Terminal-Managed Config
 
-## Observability
+Use `teiken config` or TUI Config screen to set:
 
-- `AUDIT_ENABLED` - Enable audit event persistence
-- `TRACING_ENABLED` - Enable trace collection
+- Ollama endpoint
+- Default model
+- Dev server host/port
+- Logging level
+- Workspace path
+- Safety toggles
+- Data directory (advanced)
 
-## Notes
+Example:
 
-- Runtime behavior and safe defaults are implemented in `app/config/settings.py`.
-- Use `scripts/smoke_test.ps1` after config changes.
+```powershell
+teiken config --default-model llama3.2 --dangerous-tools false
+```
+
+If a config change requires restart, the control plane prompts for restart.
+
+## Secrets
+
+Secrets remain env-driven. Local config file is non-secret and redacted in diagnostic exports.
+Dangerous tool profiles are gated and require explicit override confirmation.
+
+## Config Versioning
+
+Persisted config includes `config_version` and is migrated by control-plane config store logic.
