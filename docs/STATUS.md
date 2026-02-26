@@ -104,6 +104,7 @@ Program outcome on 2026-02-25:
 - [x] Phase 15: 1.20.2 hatch crash recovery + agent-contextual chat runtime (this update)
 - [x] Phase 16: 1.20.3 install-time dynamic boot UI + `teiken-claw run` flow
 - [x] Phase 17: Trust layer + autonomy parity (canonical tool envelopes, shared executor, chat/scheduler parity, receipt/audit visibility)
+- [x] Phase 18: Cinematic installer terminal v2 for `scripts/setup.ps1`
 
 ### Validation Ledger (1.20 workstream)
 
@@ -140,6 +141,9 @@ Program outcome on 2026-02-25:
 | 2026-02-26 | `venv\\Scripts\\python.exe -m pytest -q tests/test_tools_protocol.py tests/test_tools_executor.py tests/test_files_tool_phase17.py tests/control_plane/test_agent_conversation_service.py tests/control_plane/test_tui_command_router.py tests/test_agent_runtime.py tests/test_agent_runtime_phase17.py` | PASS | Phase 17 parser/executor/files/chat/runtime trust gates (`36 passed, 1 skipped`) |
 | 2026-02-26 | `venv\\Scripts\\python.exe -m pytest -q` | PASS | `691 passed, 1 skipped` after Phase 17 trust-layer integration |
 | 2026-02-26 | `powershell -ExecutionPolicy Bypass -File scripts\\e2e_control_plane.ps1 -SkipOllamaDependent` | PASS | Control-plane smoke remained green after Phase 17 runtime/tool receipt changes |
+| 2026-02-26 | `powershell -NoProfile -Command "[System.Management.Automation.Language.Parser]::ParseFile(...TeikenInstaller.psm1...)"` | PASS | Phase 18 installer module syntax check |
+| 2026-02-26 | `powershell -NoProfile -Command "Import-Module .\\scripts\\lib\\TeikenInstaller.psm1 -Force"` | PASS | Phase 18 exported installer commands importable |
+| 2026-02-26 | `powershell -ExecutionPolicy Bypass -File scripts\\setup.ps1 -CI -SkipSmokeTests -NoStart -NoUi` | PASS | Full Phase 18 setup pipeline executed in CI/plain mode with logs + summary artifacts |
 
 ### Phase 12/13 Closure Notes
 
@@ -239,3 +243,16 @@ Program outcome on 2026-02-25:
    - `/receipts` command added (CLI/TUI chat flows)
    - optional `/verbose` toggle shows full receipt JSON in TUI chat.
 7. Prompt contract updated to explicitly forbid fake side-effect claims without runtime receipts and to ban code-fence pseudo tool calls.
+
+### 1.4.0 Phase 18 Cinematic Installer Notes
+
+1. Added dedicated installer module `scripts/lib/TeikenInstaller.psm1` with:
+   - shared installer state model
+   - alternate-screen renderer with animation hooks
+   - quiet `.NET Process` runner
+   - step orchestration and summary artifact generation
+   - launchpad controls and cancellation handling.
+2. Rewrote `scripts/setup.ps1` into a thin orchestrator over 12 defined installer steps.
+3. Added branded helper script `scripts/_branding.ps1` for reusable terminal logo assets.
+4. Added installer docs at `docs/INSTALLER.md`.
+5. Added explicit ignore patterns for installer/boot logs in `.gitignore`.

@@ -65,6 +65,15 @@ Safe defaults:
 .\scripts\setup.ps1
 ```
 
+Installer flags (Phase 18):
+
+```powershell
+.\scripts\setup.ps1 -VerboseLogs
+.\scripts\setup.ps1 -NoAnsi
+.\scripts\setup.ps1 -SkipSmokeTests
+.\scripts\setup.ps1 -CI
+```
+
 Default setup behavior:
 
 1. Creates/updates virtual environment
@@ -127,6 +136,7 @@ Boot -> Dashboard / Setup Wizard -> Models / Agents / Hatch / Chat / Status / Do
 
 - [API Documentation](docs/api.md)
 - [Configuration Guide](docs/config.md)
+- [Installer Guide](docs/INSTALLER.md)
 - [Project Status](docs/STATUS.md)
 - [Specification](teiken_claw_spec.md)
 

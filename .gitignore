@@ -16,6 +16,8 @@ eggs/
 .eggs/
 lib/
 lib64/
+!scripts/lib/
+!scripts/lib/TeikenInstaller.psm1
 parts/
 sdist/
 var/
@@ -133,6 +135,9 @@ dmypy.json
 # Logs
 *.log
 logs/
+logs/install/
+logs/boot/
+logs/install/bundles/
 
 # IDE
 .vscode/

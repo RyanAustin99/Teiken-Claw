@@ -1,326 +1,473 @@
-# Teiken Claw Setup Script
-# Purpose: Environment setup for Windows
+# Teiken Claw Setup Script v2.0 (Cinematic Installer)
 # Run: powershell -ExecutionPolicy Bypass -File scripts/setup.ps1
 
+[CmdletBinding()]
 param(
-    [switch]$SkipOllama = $false,
-    [switch]$SkipSmokeTest = $false,
+    [switch]$VerboseLogs = $false,
+    [switch]$NoAnsi = $false,
+    [Alias("SkipSmokeTest")][switch]$SkipSmokeTests = $false,
+    [switch]$CI = $false,
     [switch]$NoStart = $false,
-    [switch]$NoUi = $false,
-    [switch]$Verbose = $false
+    [switch]$NoUi = $false
 )
 
+Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
-# Colors for output
-function Write-Step { param([string]$Message) Write-Host "[SETUP] $Message" -ForegroundColor Cyan }
-function Write-Success { param([string]$Message) Write-Host "[OK]    $Message" -ForegroundColor Green }
-function Write-Warn { param([string]$Message) Write-Host "[WARN]  $Message" -ForegroundColor Yellow }
-function Write-Fail { param([string]$Message) Write-Host "[FAIL]  $Message" -ForegroundColor Red }
-function Write-Info { param([string]$Message) Write-Host "       $Message" -ForegroundColor Gray }
-
-# Banner
-Write-Host ""
-Write-Host "===============================================" -ForegroundColor Magenta
-Write-Host "  Teiken Claw v1.0 - Environment Setup" -ForegroundColor Magenta
-Write-Host "===============================================" -ForegroundColor Magenta
-Write-Host ""
-
-$ProjectRoot = $PSScriptRoot | Split-Path -Parent
-if (-not $ProjectRoot) {
-    $ProjectRoot = Get-Location
-}
-Set-Location $ProjectRoot
-
-Write-Step "Project root: $ProjectRoot"
-
-# ==============================================================================
-# Step 1: Verify Python Installation
-# ==============================================================================
-Write-Step "Checking Python installation..."
-
-$PythonCmd = Get-Command python -ErrorAction SilentlyContinue
-if (-not $PythonCmd) {
-    $PythonCmd = Get-Command python3 -ErrorAction SilentlyContinue
+if ($PSBoundParameters.ContainsKey("Verbose") -and $PSBoundParameters["Verbose"]) {
+    $VerboseLogs = $true
 }
 
-if (-not $PythonCmd) {
-    Write-Fail "Python not found. Please install Python 3.11 or later from https://python.org"
+$projectRoot = $PSScriptRoot | Split-Path -Parent
+Set-Location $projectRoot
+
+$modulePath = Join-Path $PSScriptRoot "lib\TeikenInstaller.psm1"
+if (-not (Test-Path $modulePath)) {
+    Write-Host "Installer module not found: $modulePath" -ForegroundColor Red
     exit 1
 }
 
-$PythonVersion = & $PythonCmd.Source --version 2>&1
-Write-Info "Found: $PythonVersion"
+Import-Module $modulePath -Force
 
-$VersionMatch = $PythonVersion -match "Python (\d+)\.(\d+)"
-if (-not $VersionMatch) {
-    Write-Fail "Could not determine Python version"
-    exit 1
+function New-StepResult {
+    param(
+        [int]$ExitCode = 0,
+        [string]$Hint = "",
+        [int]$DurationMs = 0,
+        [string]$LogPath = "",
+        [string[]]$TailLines = @(),
+        [string[]]$ErrorTailLines = @(),
+        [string]$StatusOverride = ""
+    )
+
+    return [pscustomobject]@{
+        ExitCode = $ExitCode
+        Hint = $Hint
+        DurationMs = $DurationMs
+        LogPath = $LogPath
+        TailLines = $TailLines
+        ErrorTailLines = $ErrorTailLines
+        StatusOverride = $StatusOverride
+    }
 }
 
-$Major = [int]$Matches[1]
-$Minor = [int]$Matches[2]
+function Write-LocalStepLog {
+    param(
+        [pscustomobject]$State,
+        [string]$StepId,
+        [string[]]$Lines
+    )
 
-if ($Major -lt 3 -or ($Major -eq 3 -and $Minor -lt 11)) {
-    Write-Fail "Python 3.11+ required. Found: $PythonVersion"
-    exit 1
+    $path = Join-Path $State.Paths.StepLogDir ("{0}_{1}.log" -f $StepId, (Get-Date -Format 'yyyyMMdd_HHmmss'))
+    Set-Content -Path $path -Value ($Lines -join [Environment]::NewLine) -Encoding UTF8
+    Add-Content -Path $State.Artifacts.MainLogPath -Value ("[{0}] [{1}] {2}" -f (Get-Date).ToString("yyyy-MM-dd HH:mm:ss"), $StepId, ($Lines -join " | "))
+    return $path
 }
 
-Write-Success "Python version OK ($PythonVersion)"
+function Get-ShellExecutable {
+    $current = (Get-Process -Id $PID -ErrorAction SilentlyContinue).Path
+    if ($current -and (Test-Path $current)) { return $current }
+    $pwsh = Join-Path $PSHOME "pwsh.exe"
+    if (Test-Path $pwsh) { return $pwsh }
+    $powershell = Join-Path $PSHOME "powershell.exe"
+    if (Test-Path $powershell) { return $powershell }
+    return "powershell.exe"
+}
 
-# ==============================================================================
-# Step 2: Verify Ollama (Optional)
-# ==============================================================================
-if (-not $SkipOllama) {
-    Write-Step "Checking Ollama installation..."
-    
-    $OllamaCmd = Get-Command ollama -ErrorAction SilentlyContinue
-    if (-not $OllamaCmd) {
-        Write-Warn "Ollama not found. AI features will be disabled."
-        Write-Info "Install from: https://ollama.ai"
-    } else {
-        Write-Info "Found Ollama: $($OllamaCmd.Source)"
-        
-        # Check if Ollama service is running
-        try {
-            $OllamaList = & ollama list 2>&1
-            if ($LASTEXITCODE -eq 0) {
-                Write-Success "Ollama is running"
-            } else {
-                Write-Warn "Ollama is installed but not running. Start with: ollama serve"
+$state = Get-TeikenInstallerContext `
+    -ProjectRoot $projectRoot `
+    -VerboseLogs:$VerboseLogs `
+    -NoAnsi:$NoAnsi `
+    -SkipSmokeTests:$SkipSmokeTests `
+    -CI:$CI `
+    -NoStart:$NoStart `
+    -NoUi:$NoUi
+
+$launchAction = "quit"
+$script:setupUnhandled = $null
+
+try {
+    Start-TeikenUI -State $state
+
+    $null = Invoke-TeikenStep -State $state -StepId "resolve_context" -Action {
+        param($state, $step)
+
+        $lines = @()
+        $lines += "Project root: $($state.Paths.ProjectRoot)"
+        $lines += "Mode: $($state.Mode)"
+
+        $gitCmd = Get-Command git -ErrorAction SilentlyContinue
+        if ($gitCmd) {
+            try {
+                $sha = (& $gitCmd.Source rev-parse --short HEAD 2>$null | Select-Object -First 1).Trim()
+                if ($sha) {
+                    $state.Runtime.GitSha = $sha
+                    $state.Versions.Git = $sha
+                    $lines += "Git sha: $sha"
+                } else {
+                    $lines += "Git sha unavailable"
+                }
+            } catch {
+                $lines += "Git lookup failed: $($_.Exception.Message)"
             }
-        } catch {
-            Write-Warn "Ollama is installed but not running. Start with: ollama serve"
-        }
-    }
-}
-
-# ==============================================================================
-# Step 3: Create Virtual Environment
-# ==============================================================================
-Write-Step "Setting up virtual environment..."
-
-$VenvPath = Join-Path $ProjectRoot "venv"
-if (Test-Path $VenvPath) {
-    Write-Info "Virtual environment already exists"
-} else {
-    & python -m venv $VenvPath
-    if ($LASTEXITCODE -ne 0) {
-        Write-Fail "Failed to create virtual environment"
-        exit 1
-    }
-    Write-Success "Virtual environment created"
-}
-
-$PythonVenv = Join-Path $VenvPath "Scripts\python.exe"
-$PipVenv = Join-Path $VenvPath "Scripts\pip.exe"
-
-Write-Success "Virtual environment ready"
-
-# ==============================================================================
-# Step 4: Install Dependencies
-# ==============================================================================
-Write-Step "Installing dependencies..."
-
-$RequirementsFile = Join-Path $ProjectRoot "requirements.txt"
-if (-not (Test-Path $RequirementsFile)) {
-    Write-Fail "requirements.txt not found"
-    exit 1
-}
-
-# pip 25.3+ requires using 'python -m pip' instead of pip.exe for self-upgrade
-$PythonVenvExecutable = Join-Path $VenvPath "Scripts\python.exe"
-& $PythonVenvExecutable -m pip install --upgrade pip 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    Write-Fail "Failed to upgrade pip"
-    exit 1
-}
-
-& $PipVenv install -r $RequirementsFile 2>&1
-if ($LASTEXITCODE -ne 0) {
-    Write-Fail "Failed to install dependencies"
-    exit 1
-}
-
-# Install editable package for native `teiken` command
-& $PythonVenvExecutable -m pip install -e . 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    Write-Warn "Editable install failed; fallback launcher scripts still available"
-} else {
-    Write-Success "Installed package entrypoints (teiken)"
-}
-
-Write-Success "Dependencies installed"
-
-# ==============================================================================
-# Step 5: Create .env File
-# ==============================================================================
-Write-Step "Configuring environment..."
-
-$EnvExample = Join-Path $ProjectRoot ".env.example"
-$EnvFile = Join-Path $ProjectRoot ".env"
-
-if (-not (Test-Path $EnvExample)) {
-    Write-Warn ".env.example not found - skipping .env creation"
-} elseif (Test-Path $EnvFile) {
-    # Check if .env has old comma-separated list format (invalid for pydantic-settings)
-    $EnvContent = Get-Content $EnvFile -Raw -ErrorAction SilentlyContinue
-    $HasOldExecFormat = $EnvContent -match "EXEC_ALLOWLIST=[a-z]"
-    $HasOldWebFormat = $EnvContent -match "WEB_ALLOWED_DOMAINS=[a-z]"
-    
-    if ($HasOldExecFormat -or $HasOldWebFormat) {
-        Write-Warn ".env has old format (comma-separated lists) - recreating from .env.example"
-        Remove-Item $EnvFile -Force
-        Copy-Item $EnvExample $EnvFile
-        Write-Success "Recreated .env with correct JSON array format"
-    } else {
-        Write-Info ".env already exists - skipping"
-    }
-} else {
-    Copy-Item $EnvExample $EnvFile
-    Write-Success "Created .env from .env.example"
-    Write-Info "Terminal wizard will handle configuration on first launch"
-}
-
-# ==============================================================================
-# Step 6: Create Data Directories
-# ==============================================================================
-Write-Step "Creating data directories..."
-
-$DataDirs = @(
-    "logs",
-    "data\files",
-    "data\exports",
-    "data\backups",
-    "data\embeddings"
-)
-
-foreach ($Dir in $DataDirs) {
-    $FullPath = Join-Path $ProjectRoot $Dir
-    if (-not (Test-Path $FullPath)) {
-        New-Item -ItemType Directory -Path $FullPath -Force | Out-Null
-        Write-Info "Created: $Dir"
-    } else {
-        Write-Info "Exists: $Dir"
-    }
-}
-
-Write-Success "Data directories ready"
-
-# ==============================================================================
-# Step 7: Initialize Database
-# ==============================================================================
-Write-Step "Initializing database..."
-
-$AlembicIni = Join-Path $ProjectRoot "alembic.ini"
-if (-not (Test-Path $AlembicIni)) {
-    Write-Warn "alembic.ini not found - skipping database initialization"
-} else {
-    # Verify .env exists before running alembic
-    $EnvFile = Join-Path $ProjectRoot ".env"
-    if (-not (Test-Path $EnvFile)) {
-        Write-Warn ".env not found - creating from .env.example"
-        $EnvExample = Join-Path $ProjectRoot ".env.example"
-        if (Test-Path $EnvExample) {
-            Copy-Item $EnvExample $EnvFile
-        }
-    }
-    
-    # Run alembic - simpler approach, just run and check result
-    try {
-        # Run alembic directly, ignore stderr errors from logging
-        $null = & $PythonVenv -m alembic upgrade head 2>$null
-        $AlembicExitCode = $LASTEXITCODE
-        
-        if ($AlembicExitCode -eq 0) {
-            Write-Success "Database initialized"
         } else {
-            Write-Warn "Database migration had issues (exit code: $AlembicExitCode)"
-            Write-Warn "This may be normal for first run or if tables already exist"
+            $lines += "Git not found"
         }
+
+        $logPath = Write-LocalStepLog -State $state -StepId $step.Id -Lines $lines
+        New-StepResult -ExitCode 0 -Hint ("Root: {0}" -f $state.Paths.ProjectRoot) -LogPath $logPath -TailLines $lines
+    }
+
+    $null = Invoke-TeikenStep -State $state -StepId "check_terminal" -Action {
+        param($state, $step)
+
+        $ansiLabel = if (-not $state.TerminalCaps.Ansi) { "OFF" } elseif ($state.TerminalCaps.TrueColor) { "TRUECOLOR" } else { "BASIC" }
+        $lines = @(
+            "PowerShell: $($state.TerminalCaps.PsVersion)",
+            "Interactive: $($state.TerminalCaps.Interactive)",
+            "ANSI: $ansiLabel",
+            "Size: $($state.TerminalCaps.Width)x$($state.TerminalCaps.Height)"
+        )
+
+        $logPath = Write-LocalStepLog -State $state -StepId $step.Id -Lines $lines
+        New-StepResult -ExitCode 0 -Hint ("ANSI {0}" -f $ansiLabel) -LogPath $logPath -TailLines $lines
+    }
+
+    $null = Invoke-TeikenStep -State $state -StepId "check_python" -Action {
+        param($state, $step)
+
+        $pythonCmd = Get-Command python -ErrorAction SilentlyContinue
+        if (-not $pythonCmd) {
+            $pythonCmd = Get-Command python3 -ErrorAction SilentlyContinue
+        }
+
+        if (-not $pythonCmd) {
+            return New-StepResult -ExitCode 1 -Hint "Python not found (3.11+ required)" -TailLines @("Python command missing")
+        }
+
+        $state.Runtime.PythonCommand = $pythonCmd.Source
+        $result = Invoke-TeikenProcessQuiet -State $state -Step $step -FilePath $pythonCmd.Source -Arguments @("--version")
+
+        $resultTail = @($result.TailLines)
+        $versionLine = if ($resultTail.Count -gt 0) { $resultTail[-1] } else { "" }
+        $match = [regex]::Match($versionLine, "Python\s+(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)")
+        if (-not $match.Success) {
+            $result.ExitCode = 1
+            $result.Hint = "Unable to parse Python version"
+            return $result
+        }
+
+        $major = [int]$match.Groups["major"].Value
+        $minor = [int]$match.Groups["minor"].Value
+        if ($major -lt 3 -or ($major -eq 3 -and $minor -lt 11)) {
+            $result.ExitCode = 1
+            $result.Hint = "Python 3.11+ required ($versionLine)"
+            return $result
+        }
+
+        $state.Versions.Python = $versionLine
+        $result.Hint = "$versionLine OK"
+        return $result
+    }
+
+    $null = Invoke-TeikenStep -State $state -StepId "check_ollama" -Action {
+        param($state, $step)
+
+        $ollamaCmd = Get-Command ollama -ErrorAction SilentlyContinue
+        if (-not $ollamaCmd) {
+            return New-StepResult -ExitCode 1 -Hint "Ollama not installed" -TailLines @("Install Ollama from https://ollama.com")
+        }
+
+        $result = Invoke-TeikenProcessQuiet -State $state -Step $step -FilePath $ollamaCmd.Source -Arguments @("list")
+        if ($result.ExitCode -eq 0) {
+            $state.Versions.Ollama = "running"
+            $result.Hint = "Ollama running"
+        } else {
+            $state.Versions.Ollama = "installed (not running)"
+            $result.Hint = "Ollama installed but not running"
+        }
+        return $result
+    }
+
+    $null = Invoke-TeikenStep -State $state -StepId "venv" -Action {
+        param($state, $step)
+
+        if (-not $state.Runtime.PythonCommand) {
+            return New-StepResult -ExitCode 1 -Hint "Python command unavailable"
+        }
+
+        $pythonVenv = Join-Path $state.Paths.VenvPath "Scripts\python.exe"
+        $pipVenv = Join-Path $state.Paths.VenvPath "Scripts\pip.exe"
+        if (Test-Path $pythonVenv) {
+            $state.Runtime.PythonExe = $pythonVenv
+            $state.Runtime.PipExe = $pipVenv
+            $logPath = Write-LocalStepLog -State $state -StepId $step.Id -Lines @("Virtual environment already exists: $($state.Paths.VenvPath)")
+            return New-StepResult -ExitCode 0 -Hint "venv ready" -LogPath $logPath
+        }
+
+        $result = Invoke-TeikenProcessQuiet -State $state -Step $step -FilePath $state.Runtime.PythonCommand -Arguments @("-m", "venv", $state.Paths.VenvPath)
+        if ($result.ExitCode -eq 0 -and (Test-Path $pythonVenv)) {
+            $state.Runtime.PythonExe = $pythonVenv
+            $state.Runtime.PipExe = $pipVenv
+            $result.Hint = "venv ready"
+        } else {
+            $result.Hint = "Failed to create venv"
+            $result.ExitCode = 1
+        }
+        return $result
+    }
+
+    $null = Invoke-TeikenStep -State $state -StepId "sync_dependencies" -Action {
+        param($state, $step)
+
+        if (-not $state.Runtime.PythonExe -or -not (Test-Path $state.Runtime.PythonExe)) {
+            return New-StepResult -ExitCode 1 -Hint "venv python missing"
+        }
+
+        $quietArgs = @("--disable-pip-version-check", "--no-input", "--progress-bar", "off")
+        if ($state.Mode -eq "CINEMATIC" -and -not $state.Ui.VerboseEnabled) {
+            $quietArgs += "-q"
+        }
+
+        $upgrade = Invoke-TeikenProcessQuiet -State $state -Step $step -FilePath $state.Runtime.PythonExe -Arguments (@("-m", "pip", "install", "--upgrade", "pip") + $quietArgs)
+        if ($upgrade.ExitCode -ne 0) {
+            $upgrade.Hint = "pip upgrade failed"
+            return $upgrade
+        }
+
+        $requirements = Join-Path $state.Paths.ProjectRoot "requirements.txt"
+        if (-not (Test-Path $requirements)) {
+            return New-StepResult -ExitCode 1 -Hint "requirements.txt not found"
+        }
+
+        $sync = Invoke-TeikenProcessQuiet -State $state -Step $step -FilePath $state.Runtime.PythonExe -Arguments (@("-m", "pip", "install", "-r", $requirements) + $quietArgs)
+        if ($sync.ExitCode -ne 0) {
+            $sync.Hint = "dependency sync failed"
+            return $sync
+        }
+
+        $editable = Invoke-TeikenProcessQuiet -State $state -Step $step -FilePath $state.Runtime.PythonExe -Arguments (@("-m", "pip", "install", "-e", ".") + $quietArgs)
+        if ($editable.ExitCode -ne 0) {
+            $editable.Hint = "editable install failed"
+            return $editable
+        }
+
+        $pipInfo = Invoke-TeikenProcessQuiet -State $state -Step $step -FilePath $state.Runtime.PythonExe -Arguments @("-m", "pip", "--version")
+        $pipTail = @($pipInfo.TailLines)
+        if ($pipInfo.ExitCode -eq 0 -and $pipTail.Count -gt 0) {
+            $state.Versions.Pip = $pipTail[-1]
+        }
+
+        $editable.Hint = "pip sync complete"
+        return $editable
+    }
+
+    $null = Invoke-TeikenStep -State $state -StepId "configure_environment" -Action {
+        param($state, $step)
+
+        $lines = @()
+        $envPath = Join-Path $state.Paths.ProjectRoot ".env"
+        $envExample = Join-Path $state.Paths.ProjectRoot ".env.example"
+
+        if (-not (Test-Path $envPath) -and (Test-Path $envExample)) {
+            Copy-Item -Path $envExample -Destination $envPath -Force
+            $lines += "Created .env from .env.example"
+        } elseif (Test-Path $envPath) {
+            $lines += ".env already present"
+        } else {
+            $lines += "Warning: .env.example not found"
+        }
+
+        $configDir = Split-Path $state.Paths.ConfigPath -Parent
+        New-Item -ItemType Directory -Force -Path $configDir | Out-Null
+        if (-not (Test-Path $state.Paths.ConfigPath)) {
+            '{"config_version":1}' | Set-Content -Path $state.Paths.ConfigPath -Encoding UTF8
+            $lines += "Created user config: $($state.Paths.ConfigPath)"
+        } else {
+            $lines += "User config already present"
+        }
+
+        $logPath = Write-LocalStepLog -State $state -StepId $step.Id -Lines $lines
+        New-StepResult -ExitCode 0 -Hint "config ready" -LogPath $logPath -TailLines $lines
+    }
+
+    $null = Invoke-TeikenStep -State $state -StepId "create_directories" -Action {
+        param($state, $step)
+
+        $dirs = @(
+            "logs",
+            "data\files",
+            "data\exports",
+            "data\backups",
+            "data\embeddings",
+            "logs\boot"
+        )
+
+        $lines = @()
+        foreach ($rel in $dirs) {
+            $target = Join-Path $state.Paths.ProjectRoot $rel
+            New-Item -ItemType Directory -Force -Path $target | Out-Null
+            $lines += "Ensured: $target"
+        }
+
+        New-Item -ItemType Directory -Force -Path $state.Paths.LogsPath | Out-Null
+        $lines += "Ensured: $($state.Paths.LogsPath)"
+
+        $logPath = Write-LocalStepLog -State $state -StepId $step.Id -Lines $lines
+        New-StepResult -ExitCode 0 -Hint "data dirs ready" -LogPath $logPath -TailLines $lines
+    }
+
+    $null = Invoke-TeikenStep -State $state -StepId "initialize_database" -Action {
+        param($state, $step)
+
+        $alembicIni = Join-Path $state.Paths.ProjectRoot "alembic.ini"
+        if (-not (Test-Path $alembicIni)) {
+            return New-StepResult -ExitCode 1 -Hint "alembic.ini missing"
+        }
+
+        $python = if ($state.Runtime.PythonExe -and (Test-Path $state.Runtime.PythonExe)) { $state.Runtime.PythonExe } else { $state.Runtime.PythonCommand }
+        if (-not $python) {
+            return New-StepResult -ExitCode 1 -Hint "python executable missing"
+        }
+
+        $result = Invoke-TeikenProcessQuiet -State $state -Step $step -FilePath $python -Arguments @("-m", "alembic", "upgrade", "head")
+        if ($result.ExitCode -eq 0) {
+            $result.Hint = "db migrated"
+        } else {
+            $result.Hint = "db migration warning"
+        }
+        return $result
+    }
+
+    $null = Invoke-TeikenStep -State $state -StepId "smoke_tests" -Action {
+        param($state, $step)
+
+        if ($state.Flags.SkipSmokeTests) {
+            return New-StepResult -ExitCode 0 -Hint "skipped (--SkipSmokeTests)" -StatusOverride "skipped"
+        }
+
+        $shellExe = Get-ShellExecutable
+        $scriptPath = Join-Path $state.Paths.ProjectRoot "scripts\smoke_test.ps1"
+        if (-not (Test-Path $scriptPath)) {
+            return New-StepResult -ExitCode 1 -Hint "smoke_test.ps1 not found"
+        }
+
+        $result = Invoke-TeikenProcessQuiet -State $state -Step $step -FilePath $shellExe -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $scriptPath, "-SkipApi")
+
+        $summary = $result.TailLines | Where-Object { $_ -match "Passed:|Failed:|Warnings:" } | Select-Object -Last 3
+        if (@($summary).Count -gt 0) {
+            $result.Hint = ($summary -join "; ")
+        } else {
+            $result.Hint = if ($result.ExitCode -eq 0) { "smoke tests complete" } else { "smoke tests warning" }
+        }
+        return $result
+    }
+
+    $null = Invoke-TeikenStep -State $state -StepId "boot_report" -Action {
+        param($state, $step)
+
+        $doctorExe = Join-Path $state.Paths.VenvPath "Scripts\teiken-claw.exe"
+        $fallbackExe = Join-Path $state.Paths.VenvPath "Scripts\teiken.exe"
+
+        if (Test-Path $doctorExe) {
+            $result = Invoke-TeikenProcessQuiet -State $state -Step $step -FilePath $doctorExe -Arguments @("doctor")
+        } elseif (Test-Path $fallbackExe) {
+            $result = Invoke-TeikenProcessQuiet -State $state -Step $step -FilePath $fallbackExe -Arguments @("doctor")
+        } elseif ($state.Runtime.PythonExe -and (Test-Path $state.Runtime.PythonExe)) {
+            $result = Invoke-TeikenProcessQuiet -State $state -Step $step -FilePath $state.Runtime.PythonExe -Arguments @("-m", "app.control_plane.entrypoint", "doctor")
+        } else {
+            return New-StepResult -ExitCode 1 -Hint "doctor command unavailable"
+        }
+
+        $latestBoot = Join-Path $state.Paths.ProjectRoot "logs\boot_report.json"
+        if (Test-Path $latestBoot) {
+            $result.Hint = "boot report written"
+        } else {
+            $result.Hint = "doctor executed (no boot report found)"
+        }
+        return $result
+    }
+
+    $null = Invoke-TeikenStep -State $state -StepId "launchpad" -Action {
+        param($state, $step)
+        New-StepResult -ExitCode 0 -Hint "ready"
+    }
+
+    if (-not $state.Cancelled -and $state.ExitCode -eq 0) {
+        $launchAction = Show-TeikenLaunchpad -State $state
+    }
+}
+catch {
+    $script:setupUnhandled = $_
+    if (-not $state.Cancelled) {
+        $state.ExitCode = if ($state.ExitCode -eq 0) { 1 } else { $state.ExitCode }
+        if (-not $state.Ui.FailureMessage) {
+            $state.Ui.FailureMessage = $_.Exception.Message
+            $state.Ui.FailureTail = @($_.Exception.ToString())
+        }
+    }
+}
+finally {
+    if ($state.Cancelled -and $state.ExitCode -eq 0) {
+        $state.ExitCode = 130
+    }
+
+    try {
+        Write-TeikenSummaryArtifacts -State $state
     } catch {
-        Write-Warn "Alembic error: $_"
     }
+
+    Stop-TeikenUI -State $state
 }
 
-# ==============================================================================
-# Step 8: Run Smoke Tests
-# ==============================================================================
-if (-not $SkipSmokeTest) {
-    Write-Step "Running smoke tests..."
-    
-    $SmokeTestScript = Join-Path $ProjectRoot "scripts\smoke_test.ps1"
-    if (Test-Path $SmokeTestScript) {
-        & $SmokeTestScript
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warn "Some smoke tests failed - please review"
-        }
-    } else {
-        Write-Info "Smoke test script not found - skipping"
-    }
+if ($state.Cancelled) {
+    Write-Host ("Setup cancelled. Logs: {0}" -f $state.Artifacts.MainLogPath) -ForegroundColor Yellow
+    Write-Host ("Summary: {0}" -f $state.Artifacts.SummaryJsonPath) -ForegroundColor Gray
+    exit 130
 }
 
-# ==============================================================================
-# Next Steps
-# ==============================================================================
-Write-Host ""
-Write-Host "===============================================" -ForegroundColor Magenta
-Write-Host "  Setup Complete!" -ForegroundColor Green
-Write-Host "===============================================" -ForegroundColor Magenta
-Write-Host ""
-Write-Host "Config Path: $env:LOCALAPPDATA\TeikenClaw\config\user_config.json" -ForegroundColor Gray
-Write-Host "Logs Path:   $env:LOCALAPPDATA\TeikenClaw\logs" -ForegroundColor Gray
-Write-Host ""
+if ($state.ExitCode -ne 0) {
+    Write-Host ("Setup failed. Step logs: {0}" -f $state.Paths.StepLogDir) -ForegroundColor Red
+    Write-Host ("Main log: {0}" -f $state.Artifacts.MainLogPath) -ForegroundColor Yellow
+    Write-Host ("Summary: {0}" -f $state.Artifacts.SummaryJsonPath) -ForegroundColor Yellow
+    if ($state.Artifacts.BundleZipPath) {
+        Write-Host ("Bundle:  {0}" -f $state.Artifacts.BundleZipPath) -ForegroundColor Yellow
+    }
+    if ($script:setupUnhandled) {
+        Write-Host ("Error: {0}" -f $script:setupUnhandled.Exception.Message) -ForegroundColor DarkYellow
+    }
+    exit $state.ExitCode
+}
+
+Write-Host ("Setup complete. Logs: {0}" -f $state.Artifacts.MainLogPath) -ForegroundColor Green
+Write-Host ("Summary: {0}" -f $state.Artifacts.SummaryJsonPath) -ForegroundColor Gray
 
 if (-not $NoStart) {
-    $ApiHost = if ($env:TEIKEN_API_HOST) { $env:TEIKEN_API_HOST } else { "127.0.0.1" }
-    if ($ApiHost -eq "0.0.0.0") { $ApiHost = "127.0.0.1" }
-    $ApiPort = if ($env:TEIKEN_API_PORT) { $env:TEIKEN_API_PORT } else { "8000" }
-    $DashPort = if ($env:TEIKEN_DASHBOARD_PORT) { $env:TEIKEN_DASHBOARD_PORT } else { "5173" }
-    $PublicBase = if ($env:TEIKEN_PUBLIC_BASE_URL) { $env:TEIKEN_PUBLIC_BASE_URL } else { "http://$ApiHost`:$ApiPort" }
-
-    Write-Host "Runtime URLs:" -ForegroundColor White
-    Write-Host "  API:       http://$ApiHost`:$ApiPort" -ForegroundColor Gray
-    Write-Host "  Dashboard: http://$ApiHost`:$DashPort" -ForegroundColor Gray
-    Write-Host "  Public:    $PublicBase" -ForegroundColor Gray
-    Write-Host ""
-
-    Write-Step "Launching install-time boot experience..."
-    $TeikenClawExe = Join-Path $VenvPath "Scripts\teiken-claw.exe"
-    $TeikenExe = Join-Path $VenvPath "Scripts\teiken.exe"
-
-    if (Test-Path $TeikenClawExe) {
-        if ($NoUi) {
-            & $TeikenClawExe run --no-ui
-        } else {
-            & $TeikenClawExe run
+    switch ($launchAction) {
+        "run_dev" {
+            $runDev = Join-Path $projectRoot "scripts\run_dev.ps1"
+            if (Test-Path $runDev) {
+                & $runDev
+                exit $LASTEXITCODE
+            }
         }
-    } elseif (Test-Path $TeikenExe) {
-        if ($NoUi) {
-            & $TeikenExe run --no-ui
-        } else {
-            & $TeikenExe run
-        }
-    } else {
-        Write-Warn "teiken-claw entrypoint not found; using python module fallback"
-        if ($NoUi) {
-            & $PythonVenv -m app.control_plane.entrypoint run --no-ui
-        } else {
-            & $PythonVenv -m app.control_plane.entrypoint run
+        "doctor" {
+            $doctorExe = Join-Path $projectRoot "venv\Scripts\teiken-claw.exe"
+            if (Test-Path $doctorExe) {
+                & $doctorExe doctor
+                exit $LASTEXITCODE
+            }
+
+            $pythonExe = Join-Path $projectRoot "venv\Scripts\python.exe"
+            if (Test-Path $pythonExe) {
+                & $pythonExe -m app.control_plane.entrypoint doctor
+                exit $LASTEXITCODE
+            }
         }
     }
 } else {
-    Write-Info "Skipping runtime launch (--NoStart)"
-    if ($NoUi) {
-        Write-Host "Run later: teiken-claw run --no-ui" -ForegroundColor Gray
-    } else {
-        Write-Host "Run later: teiken-claw run" -ForegroundColor Gray
-    }
+    Write-Host "Runtime launch skipped (--NoStart)" -ForegroundColor Gray
 }
 
-Write-Host ""
-Write-Host "Optional:" -ForegroundColor White
-Write-Host "  - Install as Windows service: .\scripts\install_service.ps1" -ForegroundColor Gray
-Write-Host "  - Run smoke tests: .\scripts\smoke_test.ps1" -ForegroundColor Gray
-Write-Host ""
+exit 0
