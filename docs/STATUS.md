@@ -1,6 +1,6 @@
 # Project Status
 
-## Current Version: 1.20.0
+## Current Version: 1.20.1
 ## Last Updated: 2026-02-26
 ## Current Track: Terminal-First Control Plane
 
@@ -73,7 +73,7 @@ Program outcome on 2026-02-25:
 
 ---
 
-## 1.20.0 Program (Terminal-First Control Plane)
+## 1.20.x Program (Terminal-First Control Plane)
 
 ### Decisions Locked
 

@@ -1,6 +1,6 @@
 # Configuration Guide
 
-Teiken Claw 1.20.0 uses a layered terminal-managed configuration model:
+Teiken Claw 1.20.1 uses a layered terminal-managed configuration model:
 
 1. CLI `--data-dir` (for path override only)
 2. Environment variables
