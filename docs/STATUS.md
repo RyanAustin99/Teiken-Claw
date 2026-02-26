@@ -142,3 +142,4 @@ Program outcome on 2026-02-25:
 8. Fixed Windows `cp1252` terminal crash path by removing non-ASCII status glyphs from TUI and normalizing status markers to ASCII-safe tokens (`[OK]`, `[WARN]`, `[FAIL]`, `[WAIT]`).
 9. Added `sanitize_terminal_text(...)` for dynamic TUI output safety and regression test coverage for ASCII-only TUI source literals.
 10. Fixed CI build job dependency gap by installing `build` before `python -m build` in `.github/workflows/ci.yml`.
+11. Corrected CI workflow placement so `pip install build` runs in the `build` job (not `lint`).
