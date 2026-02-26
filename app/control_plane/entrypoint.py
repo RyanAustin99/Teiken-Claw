@@ -178,11 +178,9 @@ def run_command(
     from app.control_plane.install.live_boot import (
         build_console,
         build_startup_config,
-        is_tty,
         now_utc_timestamp,
         ports_and_urls,
         redact_boot_config,
-        run_live_boot,
         run_plain_boot,
     )
     from app.control_plane.install.runtime_snapshot import build_runtime_snapshot
@@ -200,18 +198,8 @@ def run_command(
         startup_cfg = build_startup_config(cp, version=__version__)
         registry = InMemoryAgentRegistry()
         runtime_view = build_runtime_snapshot(cp, registry)
-
-        use_live = is_tty() and not no_ui
-        if use_live:
-            boot_result = run_live_boot(
-                console=boot_console,
-                context=cp,
-                config=startup_cfg,
-                runtime_view=runtime_view,
-                registry=registry,
-            )
-        else:
-            boot_result = run_plain_boot(boot_console, context=cp, config=startup_cfg)
+        # Stabilization: disable transient live-boot splash and go directly to LUI.
+        boot_result = run_plain_boot(boot_console, context=cp, config=startup_cfg)
 
         report_exit_code = 0 if boot_result.ok else 1
         if boot_result.ok:
@@ -259,7 +247,7 @@ def run_command(
         if report_exit_code != 0:
             raise typer.Exit(code=report_exit_code)
 
-        if use_live:
+        if not no_ui:
             entered_tui = True
             _launch_tui(cp)
         else:

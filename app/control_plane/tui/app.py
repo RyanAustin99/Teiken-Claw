@@ -74,7 +74,11 @@ class TeikenControlPlaneApp(App):
         self._python_logger = logging.getLogger(__name__)
 
     def on_mount(self) -> None:
-        self.push_screen(self._build_screen(Route.BOOT))
+        cfg = self.context.config_service.load().values
+        if cfg.configured:
+            self.push_screen(self._build_screen(Route.DASHBOARD))
+        else:
+            self.push_screen(self._build_screen(Route.WIZARD))
 
     def _build_screen(self, route: Route, *, agent_id: str | None = None) -> Screen:
         if route == Route.BOOT:
