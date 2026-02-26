@@ -30,6 +30,48 @@ if (-not (Test-Path $modulePath)) {
 
 Import-Module $modulePath -Force -DisableNameChecking
 
+function Show-SetupBranding {
+    param(
+        [switch]$NoColor
+    )
+
+    $teal = if ($NoColor) { "Gray" } else { "Cyan" }
+    $orange = if ($NoColor) { "Gray" } else { "DarkYellow" }
+    $muted = if ($NoColor) { "Gray" } else { "DarkGray" }
+
+    $banner = @(
+        "TTTTTTTT  EEEEEEE  III  K   K  EEEEEEE  N   N      CCCCC   L        AAAAA   W     W",
+        "   TT     E        III  K  K   E        NN  N     C        L       A     A  W     W",
+        "   TT     EEEEE    III  KKK    EEEEE    N N N     C        L       AAAAAAA  W  W  W",
+        "   TT     E        III  K  K   E        N  NN     C        L       A     A  W W W W",
+        "   TT     EEEEEEE  III  K   K  EEEEEEE  N   N      CCCCC   LLLLLL  A     A   W   W"
+    )
+
+    $logo = @(
+        "      /\\                          /\\",
+        "     /**\\                        /**\\",
+        "    /****\\      TTTTTTTTTT      /****\\",
+        "   /******\\         TT         /******\\",
+        "  /********\\        TT        /********\\",
+        "      ||            TT            ||",
+        "      ||            TT            ||",
+        "               TEIKEN CLAW",
+        "      Locally Hosted First - Agent Platform"
+    )
+
+    Write-Host ""
+    foreach ($line in $banner) {
+        Write-Host $line -ForegroundColor $teal
+    }
+    Write-Host ""
+    foreach ($line in $logo) {
+        Write-Host $line -ForegroundColor $orange
+    }
+    Write-Host ""
+    Write-Host "Installer mode: stable plain output (no animation)" -ForegroundColor $muted
+    Write-Host ""
+}
+
 function New-StepResult {
     param(
         [int]$ExitCode = 0,
@@ -86,6 +128,11 @@ $state = Get-TeikenInstallerContext `
 
 # Temporary stabilization: disable cinematic installer UI.
 $state.Mode = "PLAIN"
+
+if (-not $CI) {
+    $noBrandColor = $NoAnsi -or $env:TEIKEN_NO_COLOR -eq "1"
+    Show-SetupBranding -NoColor:$noBrandColor
+}
 
 $launchAction = "run_control_plane"
 $script:setupUnhandled = $null
