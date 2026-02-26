@@ -1,6 +1,6 @@
 # Configuration Guide
 
-Teiken Claw 1.20.1 uses a layered terminal-managed configuration model:
+Teiken Claw 1.20.2 uses a layered terminal-managed configuration model:
 
 1. CLI `--data-dir` (for path override only)
 2. Environment variables
@@ -36,6 +36,7 @@ Use `teiken config` or TUI Config screen to set:
 - Workspace path
 - Safety toggles
 - Data directory (advanced)
+- Agent prompt template version (`agent_prompt_template_version`)
 
 Preferred UX path is the Setup Wizard screen (Step 1..6) launched on first run,
 with `Ctrl+S` save behavior on editable screens.
@@ -56,3 +57,15 @@ Dangerous tool profiles are gated and require explicit override confirmation.
 ## Config Versioning
 
 Persisted config includes `config_version` and is migrated by control-plane config store logic.
+
+## Agent Prompt and Onboarding
+
+Hatched agents use a versioned system prompt template (`agent_prompt_template_version`) and per-agent onboarding profile fields stored in control-plane state.
+
+On first chat turn for an onboarding-incomplete agent, the control plane asks:
+
+1. User preferred name
+2. Agent name confirmation / rename preference
+3. Agent purpose
+
+These answers are persisted per agent and reused in future sessions.

@@ -46,6 +46,7 @@ Single-instance lock file:
 Safe defaults:
 - new agents default to `tool_profile=safe`
 - dangerous profile changes require explicit override confirmation
+- first chat turn runs per-agent onboarding (user name, agent name confirmation, purpose)
 
 ## Quick Start (Windows)
 
@@ -83,6 +84,8 @@ Inside the TUI:
 `F1` Help, `Esc` Back, `Ctrl+R` Refresh, `Ctrl+L` Logs, `Ctrl+S` Save, `Ctrl+C` Quit.
 4. Screen map:
 Boot -> Dashboard / Setup Wizard -> Models / Agents / Hatch / Chat / Status / Doctor / Logs.
+5. Hatched agents are agent-contextual (not raw model passthrough): chat runs with per-agent prompt, workspace context, tool profile, and loaded skills summary.
+6. First chat interaction for a new agent performs onboarding questions, then transitions to normal task execution.
 
 ## Common Tasks
 

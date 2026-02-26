@@ -1,6 +1,6 @@
 # Project Status
 
-## Current Version: 1.20.1
+## Current Version: 1.20.2
 ## Last Updated: 2026-02-26
 ## Current Track: Terminal-First Control Plane
 
@@ -101,6 +101,7 @@ Program outcome on 2026-02-25:
 - [x] Phase 12: Safety hardening and expanded audit coverage
 - [x] Phase 13: Full E2E gate automation
 - [x] Phase 14: 1.20.1 CI hotfix + multi-screen TUI shell/palette overhaul (`772f0c5`, `74c29e1`, `3256973`, `e81f64b`)
+- [x] Phase 15: 1.20.2 hatch crash recovery + agent-contextual chat runtime (this update)
 
 ### Validation Ledger (1.20 workstream)
 
@@ -120,6 +121,10 @@ Program outcome on 2026-02-25:
 | 2026-02-26 | `powershell -ExecutionPolicy Bypass -File scripts/e2e_control_plane.ps1 -SkipOllamaDependent` | PASS (targeted) | CLI/control-plane lifecycle path remains green after TUI shell changes |
 | 2026-02-26 | `venv\\Scripts\\python.exe -m pytest -q` | PASS | `657 passed, 1 skipped` after hatch-route crash regression fix |
 | 2026-02-26 | `venv\\Scripts\\python.exe -m flake8 --select=E9,F63,F7 --show-source --statistics app/ tests/ scripts/` | PASS | CI lint gate adjusted to high-signal correctness checks |
+| 2026-02-26 | `venv\\Scripts\\python.exe -m pytest -q tests/control_plane` | PASS | `22 passed` after onboarding/profile schema + conversation service + hatch recovery tests |
+| 2026-02-26 | `venv\\Scripts\\python.exe -m pytest -q tests/test_app.py tests/test_telegram.py tests/test_throttles_import.py` | PASS | Import/runtime regressions remained green after control-plane runtime pivot |
+| 2026-02-26 | `venv\\Scripts\\python.exe -m pytest -q` | PASS | `664 passed, 1 skipped` with full-suite validation for 1.20.2 |
+| 2026-02-26 | `venv\\Scripts\\python.exe -m compileall -q app tests scripts` | PASS | Syntax gate for CI/lint parity |
 
 ### Phase 12/13 Closure Notes
 
@@ -143,3 +148,16 @@ Program outcome on 2026-02-25:
 9. Added `sanitize_terminal_text(...)` for dynamic TUI output safety and regression test coverage for ASCII-only TUI source literals.
 10. Fixed CI build job dependency gap by installing `build` before `python -m build` in `.github/workflows/ci.yml`.
 11. Corrected CI workflow placement so `pip install build` runs in the `build` job (not `lint`).
+
+### 1.20.2 Hatch Recovery + Agent Skeleton Notes
+
+1. Added per-agent onboarding/profile persistence fields and session onboarding status tracking in control-plane state.
+2. Added versioned hatched-agent system prompt template at `app/control_plane/prompts/hatched_agent_system_prompt.md`.
+3. Added `AgentPromptTemplateService` and `AgentConversationService` to build agent-contextual chat with system prompt, workspace, tools, and skills context.
+4. Replaced control-plane direct model passthrough path by routing `RuntimeSupervisor.chat(...)` through conversation service.
+5. Hardened hatch execution path with idempotent in-flight guard, failure isolation, and explicit `crashed` status preservation on startup errors.
+6. Added crash-safe UI/command error presentation with correlation IDs and log-path hints via `uikit` mapping.
+7. Added regression coverage:
+   - onboarding state machine and prompt composition
+   - hatch failure to `crashed` + idempotent retry
+   - chat path enforcement of conversation service (no direct fallback)

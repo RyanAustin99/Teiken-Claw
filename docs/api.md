@@ -66,3 +66,13 @@ Navigation / Actions / Diagnostics / Runtime.
 
 Screen map:
 `Boot -> Dashboard/Setup Wizard -> Models -> Agents -> Hatch -> Chat -> Status -> Doctor -> Logs`
+
+Agent chat contract (control plane):
+
+- Hatch creates persistent agent + runtime policy + workspace path.
+- Runtime supervisor routes chat through agent-contextual conversation service (system prompt + session history), not bare single-turn model passthrough.
+- First-chat onboarding is per-agent and persisted:
+  - user preferred name
+  - agent name confirmation/rename
+  - primary purpose
+- Hatch/runtime start failure keeps agent record in `crashed` status with recovery actions (`doctor`, `models`, restart/edit).
