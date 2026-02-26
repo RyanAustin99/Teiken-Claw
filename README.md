@@ -75,6 +75,13 @@ Default setup behavior:
 teiken
 ```
 
+Inside the TUI:
+
+1. Type commands directly in the command bar (for example `teiken status`, `agents list`, `hatch --name claw`).
+2. Press `Enter` to execute.
+3. Use `Ctrl+P` or `Ctrl+K` to focus the command bar.
+4. After `chat start <agent>`, plain text is sent as chat messages.
+
 ## Common Tasks
 
 | Task | Command |

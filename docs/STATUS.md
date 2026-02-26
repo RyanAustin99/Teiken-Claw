@@ -112,6 +112,8 @@ Program outcome on 2026-02-25:
 | 2026-02-26 | `powershell -ExecutionPolicy Bypass -File scripts/e2e_control_plane.ps1 -SkipOllamaDependent` | PASS (targeted) | Added scripted E2E gate path for CI and local validation |
 | 2026-02-26 | `python -m pytest -q` | PASS | `649 passed, 1 skipped` |
 | 2026-02-26 | `powershell -ExecutionPolicy Bypass -File scripts/smoke_test.ps1` | PASS | `Failed: 0` (one non-critical warning when API server is not running) |
+| 2026-02-26 | `python -m pytest -q tests/control_plane` | PASS | `11 passed` after TUI command-bar routing integration |
+| 2026-02-26 | `python -m app.control_plane.entrypoint --data-dir ./.tmp_teiken_ui status` | PASS | CLI remained stable after TUI command-router changes |
 
 ### Phase 12/13 Closure Notes
 
@@ -119,3 +121,4 @@ Program outcome on 2026-02-25:
 2. Enforced safe-by-default tool profiles and explicit guarded dangerous overrides.
 3. Added `--details` error mode for actionable failure introspection.
 4. Added CI workflow gate for control-plane tests and E2E smoke: `.github/workflows/control-plane-ci.yml`.
+5. Integrated in-TUI command bar with direct `teiken` command parsing, `Ctrl+P/Ctrl+K` focus, and chat-mode input fallback.

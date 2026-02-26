@@ -54,3 +54,9 @@ Top-level command interface:
 - `teiken upgrade`
 - `teiken version`
 - `teiken --details <command>` for expanded error details
+
+TUI command bar:
+
+- `teiken` launches the Textual dashboard with an integrated command bar.
+- The command bar accepts `teiken` commands directly (for example `teiken status`, `agents list`, `chat start <agent>`).
+- `Ctrl+P` and `Ctrl+K` focus the command bar.
