@@ -788,26 +788,11 @@ function Render-TeikenFrame {
     $metaStyled = Format-TeikenText -State $State -Text $meta -Style 'Muted'
     $tagline = (Format-TeikenText -State $State -Text 'Local-first agent service • Ollama-ready • ' -Style 'Muted') + (Format-TeikenText -State $State -Text 'Diagnostics-first' -Style 'Orange')
     $innerWidth = [Math]::Max(4, $width - 4)
-    $brandAccent = ''
-    if (Get-Command Get-TeikenClawLogoLines -ErrorAction SilentlyContinue) {
-        try {
-            $logoLines = Get-TeikenClawLogoLines -Compact -NoColor:(-not $State.TerminalCaps.Ansi)
-            if ($logoLines -and $logoLines.Count -gt 0) {
-                $brandAccent = Get-TeikenMiddleEllipsis -Text $logoLines[0] -MaxLength ([Math]::Max(12, $innerWidth))
-            }
-        } catch {
-            $brandAccent = ''
-        }
-    }
-
     $frameLines.Add(("┃  {0}{1}" -f $titleLine, ' ' * [Math]::Max(0, $innerWidth - (Get-TeikenVisibleLength $titleLine))))
     $frameLines.Add(("┃  {0}{1}" -f $subtitle, ' ' * [Math]::Max(0, $innerWidth - (Get-TeikenVisibleLength $subtitle))))
     $frameLines.Add(("┃  {0}{1}" -f $metaStyled, ' ' * [Math]::Max(0, $innerWidth - (Get-TeikenVisibleLength $metaStyled))))
 
-    if ($width -ge 110 -and $brandAccent) {
-        $line = Format-TeikenText -State $State -Text $brandAccent -Style 'Muted'
-        $frameLines.Add(("┃  {0}{1}" -f $line, ' ' * [Math]::Max(0, $innerWidth - (Get-TeikenVisibleLength $line))))
-    } elseif ($width -ge 90 -and $State.Ui.IntroPhase -ge 3) {
+    if ($width -ge 90 -and $State.Ui.IntroPhase -ge 3) {
         $line = if ($width -ge 110) { $tagline } else { Format-TeikenText -State $State -Text 'Local-first • Ollama-ready • Diagnostics-first' -Style 'Muted' }
         $frameLines.Add(("┃  {0}{1}" -f $line, ' ' * [Math]::Max(0, $innerWidth - (Get-TeikenVisibleLength $line))))
     } else {
