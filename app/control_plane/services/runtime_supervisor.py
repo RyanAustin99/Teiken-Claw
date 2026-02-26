@@ -1,0 +1,159 @@
+"""Runtime supervision for dev server and agent runtimes."""
+
+from __future__ import annotations
+
+import asyncio
+from datetime import datetime
+from typing import Dict, Optional
+
+from app.control_plane.domain.errors import ValidationError
+from app.control_plane.domain.models import RuntimeEntry, RuntimeStatus, RunnerType, SupervisorSnapshot
+from app.control_plane.infra.runner_base import AgentRunner
+from app.control_plane.infra.runner_inprocess import InProcessRunner
+from app.control_plane.infra.runner_subprocess import SubprocessRunner
+from app.control_plane.infra.server_process import ServerProcessManager
+from app.control_plane.services.agent_service import AgentService
+from app.control_plane.services.config_service import ConfigService
+from app.control_plane.services.model_service import ModelService
+from app.control_plane.services.session_service import SessionService
+
+
+class RuntimeSupervisor:
+    """Orchestrates dev server process and per-agent runtimes."""
+
+    def __init__(
+        self,
+        config_service: ConfigService,
+        model_service: ModelService,
+        agent_service: AgentService,
+        session_service: SessionService,
+        server_process_manager: ServerProcessManager,
+    ) -> None:
+        self.config_service = config_service
+        self.model_service = model_service
+        self.agent_service = agent_service
+        self.session_service = session_service
+        self.server_process_manager = server_process_manager
+        cfg = self.config_service.load().values
+        self._semaphore = asyncio.Semaphore(max(1, cfg.max_inflight_ollama_requests))
+        self._inflight = 0
+        self._runners: Dict[str, AgentRunner] = {}
+        self._last_errors: Dict[str, str] = {}
+
+    def start_dev_server(self) -> SupervisorSnapshot:
+        cfg = self.config_service.load().values
+        self.server_process_manager.host = cfg.dev_server_host
+        self.server_process_manager.port = cfg.dev_server_port
+        self.server_process_manager.start(attach_if_running=True)
+        return self.snapshot()
+
+    def stop_dev_server(self) -> SupervisorSnapshot:
+        self.server_process_manager.stop()
+        return self.snapshot()
+
+    def restart_dev_server(self) -> SupervisorSnapshot:
+        self.server_process_manager.restart()
+        return self.snapshot()
+
+    async def start_agent(self, agent_id: str) -> RuntimeEntry:
+        agent = self.agent_service.get_agent(agent_id)
+        if not agent:
+            raise ValidationError(f"Unknown agent: {agent_id}")
+
+        if agent.id in self._runners:
+            return self._entry_from_runner(agent.id, self._runners[agent.id])
+
+        cfg = self.config_service.load().values
+        queue_depth = agent.max_queue_depth or cfg.max_agent_queue_depth
+        runner_type = agent.runner_type or RunnerType.INPROCESS
+        if runner_type == RunnerType.SUBPROCESS and not cfg.subprocess_runner_enabled:
+            raise ValidationError("Subprocess runner is disabled. Enable in config first.")
+
+        if runner_type == RunnerType.SUBPROCESS:
+            runner: AgentRunner = SubprocessRunner(agent_id=agent.id)
+        else:
+            runner = InProcessRunner(
+                agent_id=agent.id,
+                max_queue_depth=queue_depth,
+                semaphore=self._semaphore,
+                chat_fn=lambda msg, aid=agent.id: self._chat_with_limits(aid, msg),
+            )
+
+        await runner.start()
+        self._runners[agent.id] = runner
+        self.agent_service.set_status(agent.id, RuntimeStatus.RUNNING)
+        return self._entry_from_runner(agent.id, runner)
+
+    async def stop_agent(self, agent_id: str) -> RuntimeEntry:
+        runner = self._runners.get(agent_id)
+        if not runner:
+            self.agent_service.set_status(agent_id, RuntimeStatus.STOPPED)
+            return RuntimeEntry(agent_id=agent_id, status=RuntimeStatus.STOPPED, runner_type=RunnerType.INPROCESS)
+        await runner.stop()
+        del self._runners[agent_id]
+        self.agent_service.set_status(agent_id, RuntimeStatus.STOPPED)
+        return self._entry_from_runner(agent_id, runner)
+
+    async def restart_agent(self, agent_id: str) -> RuntimeEntry:
+        await self.stop_agent(agent_id)
+        return await self.start_agent(agent_id)
+
+    async def restart_all(self) -> SupervisorSnapshot:
+        for agent_id in list(self._runners.keys()):
+            await self.restart_agent(agent_id)
+        self.restart_dev_server()
+        return self.snapshot()
+
+    async def chat(self, agent_id: str, session_id: str, message: str) -> str:
+        runner = self._runners.get(agent_id)
+        if not runner:
+            await self.start_agent(agent_id)
+            runner = self._runners[agent_id]
+        self.session_service.append_user_message(session_id, message)
+        response = await runner.send_message(message)
+        self.session_service.append_assistant_message(session_id, response)
+        return response
+
+    def snapshot(self) -> SupervisorSnapshot:
+        server_status = self.server_process_manager.status()
+        entries = [self._entry_from_runner(agent_id, runner) for agent_id, runner in self._runners.items()]
+        return SupervisorSnapshot(
+            dev_server_running=server_status.running,
+            dev_server_url=server_status.url if server_status.running else None,
+            global_inflight_ollama=self._inflight,
+            max_inflight_ollama=self.config_service.load().values.max_inflight_ollama_requests,
+            runtimes=entries,
+        )
+
+    async def shutdown_gracefully(self) -> None:
+        for agent_id in list(self._runners.keys()):
+            await self.stop_agent(agent_id)
+        self.stop_dev_server()
+
+    async def _chat_with_limits(self, agent_id: str, message: str) -> str:
+        agent = self.agent_service.get_agent(agent_id)
+        model_override = agent.model if agent else None
+        self._inflight += 1
+        try:
+            response = await self.model_service.chat(message=message, model=model_override)
+            self.agent_service.set_status(agent_id, RuntimeStatus.RUNNING)
+            return response
+        except Exception as exc:
+            self._last_errors[agent_id] = str(exc)
+            self.agent_service.set_status(agent_id, RuntimeStatus.DEGRADED, last_error=str(exc))
+            raise
+        finally:
+            self._inflight = max(0, self._inflight - 1)
+
+    def _entry_from_runner(self, agent_id: str, runner: AgentRunner) -> RuntimeEntry:
+        status = runner.status()
+        return RuntimeEntry(
+            agent_id=agent_id,
+            status=status.status,
+            runner_type=status.runner_type,
+            queued=status.queued,
+            overflow_count=status.overflow_count,
+            last_error=status.last_error or self._last_errors.get(agent_id),
+            last_heartbeat_at=status.last_heartbeat_at,
+        )
+
