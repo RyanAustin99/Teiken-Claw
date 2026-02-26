@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Sequence
 
 from app.control_plane.bootstrap import ControlPlaneContext
 from app.control_plane.domain.errors import ValidationError
-from app.control_plane.domain.models import AgentRecord, RunnerType
+from app.control_plane.domain.models import AgentRecord, RunnerType, RuntimeStatus
 
 
 @dataclass
@@ -284,21 +284,32 @@ class TuiCommandRouter:
             )
 
         runner = RunnerType(parsed["runner"])
-        agent = self.context.agent_service.create_agent(
-            name=parsed["name"],
-            description=parsed["description"],
-            model=parsed["model"],
-            runner_type=runner,
-            tool_profile=parsed["tool_profile"],
-            allow_dangerous_override=parsed["allow_dangerous"],
-        )
-        lines = [f"Hatched agent: {agent.name} ({agent.id})"]
+        existing = self.context.agent_service.get_agent(str(parsed["name"]))
+        if existing:
+            agent = existing
+            lines = [f"Using existing agent: {agent.name} ({agent.id})"]
+        else:
+            agent = self.context.agent_service.create_agent(
+                name=parsed["name"],
+                description=parsed["description"],
+                model=parsed["model"],
+                runner_type=runner,
+                tool_profile=parsed["tool_profile"],
+                allow_dangerous_override=parsed["allow_dangerous"],
+                prompt_template_version=config.agent_prompt_template_version,
+            )
+            lines = [f"Hatched agent: {agent.name} ({agent.id})"]
         if not parsed["no_start"]:
-            await self.context.runtime_supervisor.start_agent(agent.id)
-            session = self.context.session_service.new_session(agent.id, title=f"{agent.name} session")
-            self.active_agent_id = agent.id
-            self.active_session_id = session.id
-            lines.append(f"Started runtime and opened chat session: {session.id}")
+            try:
+                await self.context.runtime_supervisor.start_agent(agent.id)
+                session = self.context.session_service.new_session(agent.id, title=f"{agent.name} session")
+                self.active_agent_id = agent.id
+                self.active_session_id = session.id
+                lines.append(f"Started runtime and opened chat session: {session.id}")
+            except Exception as exc:
+                self.context.agent_service.set_status(agent.id, status=RuntimeStatus.CRASHED, last_error=str(exc))
+                lines.append("Runtime start failed. Agent kept as crashed.")
+                lines.append("Recovery: run `doctor`, then `agents restart <agent>` or edit model/config.")
         else:
             lines.append("Runtime not started (--no-start).")
         self.context.audit_service.log(

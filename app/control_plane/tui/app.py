@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from functools import partial
+import logging
 from typing import Iterable
 
+from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
@@ -67,6 +69,7 @@ class TeikenControlPlaneApp(App):
     def __init__(self, context: ControlPlaneContext) -> None:
         super().__init__()
         self.context = context
+        self._logger = logging.getLogger(__name__)
 
     def on_mount(self) -> None:
         self.push_screen(self._build_screen(Route.BOOT))
@@ -136,6 +139,18 @@ class TeikenControlPlaneApp(App):
             self.push_screen(QuitConfirmModal(), callback=self._handle_quit_decision)
             return
         self.exit()
+
+    def on_error(self, event: events.Error) -> None:
+        error = getattr(event, "error", RuntimeError("Unknown TUI error"))
+        self._logger.error(
+            "Unhandled TUI error",
+            exc_info=(type(error), error, getattr(error, "__traceback__", None)),
+        )
+        current = self.screen
+        show_error = getattr(current, "show_error", None)
+        if callable(show_error):
+            show_error(error)
+        event.stop()
 
     def _handle_quit_decision(self, should_quit: bool) -> None:
         if not should_quit:

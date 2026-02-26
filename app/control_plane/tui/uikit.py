@@ -5,7 +5,11 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Optional
+from uuid import uuid4
+
+from app.control_plane.domain.errors import ControlPlaneError
 
 from textual.widgets import Static
 
@@ -54,6 +58,28 @@ class ErrorPayload:
     message: str
     code: Optional[str] = None
     details: Optional[str] = None
+    correlation_id: Optional[str] = None
+    logs_path: Optional[str] = None
+
+
+def map_exception_to_payload(error: Exception, *, logs_path: Optional[Path] = None) -> ErrorPayload:
+    correlation_id = str(uuid4())
+    if isinstance(error, ControlPlaneError):
+        details = ", ".join(f"{k}={v}" for k, v in error.details.items()) if error.details else None
+        return ErrorPayload(
+            message=error.user_message,
+            code=error.code,
+            details=details,
+            correlation_id=correlation_id,
+            logs_path=str(logs_path) if logs_path else None,
+        )
+    return ErrorPayload(
+        message="Unexpected error",
+        code="UNEXPECTED",
+        details=str(error),
+        correlation_id=correlation_id,
+        logs_path=str(logs_path) if logs_path else None,
+    )
 
 
 class ErrorBanner(Static):
@@ -87,8 +113,15 @@ class ErrorBanner(Static):
             self.update("")
             return
         lines = [f"Error: {self._payload.message}"]
+        footer_parts = []
         if self._payload.code:
-            lines.append(f"Code: {self._payload.code}")
+            footer_parts.append(f"code={self._payload.code}")
+        if self._payload.correlation_id:
+            footer_parts.append(f"correlation_id={self._payload.correlation_id}")
+        if self._payload.logs_path:
+            footer_parts.append(f"logs={self._payload.logs_path}")
+        if footer_parts:
+            lines.append(" | ".join(footer_parts))
         if self._show_details and self._payload.details:
             lines.append(f"Details: {self._payload.details}")
         else:

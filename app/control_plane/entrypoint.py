@@ -34,7 +34,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for minimal env
 from app import __version__
 from app.control_plane.bootstrap import ControlPlaneContext, build_context
 from app.control_plane.domain.errors import ControlPlaneError, SingleInstanceError, ValidationError
-from app.control_plane.domain.models import RunnerType
+from app.control_plane.domain.models import RunnerType, RuntimeStatus
 from app.control_plane.infra.db_bootstrap import bootstrap_storage
 
 
@@ -261,9 +261,16 @@ def hatch_command(
         model=model,
         tool_profile=tool_profile,
         runner_type=runner,
+        prompt_template_version=cp.config_service.load().values.agent_prompt_template_version,
         allow_dangerous_override=allow_dangerous,
     )
-    _run_async(cp.runtime_supervisor.start_agent(agent.id))
+    try:
+        _run_async(cp.runtime_supervisor.start_agent(agent.id))
+    except Exception as exc:
+        cp.agent_service.set_status(agent.id, RuntimeStatus.CRASHED, last_error=str(exc))
+        console.print(f"[red]Runtime start failed:[/red] {exc}")
+        console.print("Agent was kept with crashed status. Use `teiken doctor` and `teiken agents restart <id>`.")
+        return
     session = cp.session_service.new_session(agent.id, title=f"{agent.name} session")
     cp.audit_service.log(
         "agent.hatch",

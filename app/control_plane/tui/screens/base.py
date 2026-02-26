@@ -10,9 +10,8 @@ from textual.screen import Screen
 from textual.widgets import Button, Footer, Header, Static
 
 from app.control_plane.bootstrap import ControlPlaneContext
-from app.control_plane.domain.errors import ControlPlaneError
 from app.control_plane.tui.navigation import Route, ROUTE_TITLES
-from app.control_plane.tui.uikit import ErrorBanner, ErrorPayload
+from app.control_plane.tui.uikit import ErrorBanner, map_exception_to_payload
 
 
 class BaseControlScreen(Screen):
@@ -73,11 +72,7 @@ class BaseControlScreen(Screen):
         self.error_banner.clear()
 
     def show_error(self, error: Exception) -> None:
-        if isinstance(error, ControlPlaneError):
-            details = ", ".join(f"{k}={v}" for k, v in error.details.items()) if error.details else None
-            payload = ErrorPayload(message=error.user_message, code=error.code, details=details)
-        else:
-            payload = ErrorPayload(message="Unexpected error", code="UNEXPECTED", details=str(error))
+        payload = map_exception_to_payload(error, logs_path=self.context.paths.logs_dir)
         self.error_banner.show_error(payload)
 
     def jump(self, route: Route) -> None:

@@ -59,7 +59,11 @@ class ChatScreen(BaseControlScreen):
         event.input.value = ""
         if not text:
             return
-        await self._handle_input(text)
+        try:
+            await self._handle_input(text)
+        except Exception as exc:
+            self.show_error(exc)
+            self.state_line.update("[WARN] Input failed. Use Doctor/Config if issue persists.")
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
@@ -69,16 +73,20 @@ class ChatScreen(BaseControlScreen):
         await super().on_button_pressed(event)
 
     async def handle_primary_action(self, action_id: str) -> None:
-        if action_id == "chat-new":
-            await self._start_chat_session(new=True)
-        elif action_id == "chat-resume":
-            await self._resume_latest()
-        elif action_id == "chat-sessions":
-            self._list_sessions()
-        elif action_id == "chat-rename":
-            await self._rename_session()
-        elif action_id == "chat-delete":
-            await self._delete_session()
+        try:
+            if action_id == "chat-new":
+                await self._start_chat_session(new=True)
+            elif action_id == "chat-resume":
+                await self._resume_latest()
+            elif action_id == "chat-sessions":
+                self._list_sessions()
+            elif action_id == "chat-rename":
+                await self._rename_session()
+            elif action_id == "chat-delete":
+                await self._delete_session()
+        except Exception as exc:
+            self.show_error(exc)
+            self.state_line.update("[WARN] Action failed.")
 
     async def refresh_data(self) -> None:
         if self.active_agent_id and self.active_session_id:
@@ -87,6 +95,9 @@ class ChatScreen(BaseControlScreen):
             self.state_line.update("No active session")
 
     async def _handle_input(self, text: str) -> None:
+        if self._pending_task and not self._pending_task.done():
+            self.transcript.write("assistant> Still working on the previous message. Please wait.")
+            return
         if text.startswith("/"):
             await self._handle_command(text.lower())
             return
@@ -164,7 +175,10 @@ class ChatScreen(BaseControlScreen):
             sessions = self.context.session_service.list_sessions(agent.id, limit=1)
             session = sessions[0] if sessions else self.context.session_service.new_session(agent.id, title=f"{agent.name} chat")
         self.active_session_id = session.id
-        self.state_line.update(sanitize_terminal_text(f"Chat ready: {agent.name} ({session.id})"))
+        onboarding_note = ""
+        if session.onboarding_status.value != "complete":
+            onboarding_note = " | onboarding in progress"
+        self.state_line.update(sanitize_terminal_text(f"Chat ready: {agent.name} ({session.id}){onboarding_note}"))
         self._load_transcript()
 
     async def _resume_latest(self) -> None:
