@@ -72,20 +72,29 @@ class TeikenControlPlaneApp(App):
         self.push_screen(self._build_screen(Route.BOOT))
 
     def _build_screen(self, route: Route, *, agent_id: str | None = None) -> Screen:
-        screen_map = {
-            Route.BOOT: BootScreen(self.context),
-            Route.DASHBOARD: DashboardScreen(self.context),
-            Route.WIZARD: SetupWizardScreen(self.context),
-            Route.MODELS: ModelsScreen(self.context),
-            Route.AGENTS: AgentsScreen(self.context),
-            Route.HATCH: HatchScreen(self.context),
-            Route.CHAT: ChatScreen(self.context, initial_agent_id=agent_id),
-            Route.STATUS: StatusScreen(self.context),
-            Route.DOCTOR: DoctorScreen(self.context),
-            Route.LOGS: LogsScreen(self.context),
-            Route.HELP: HelpScreen(self.context),
-        }
-        return screen_map[route]
+        if route == Route.BOOT:
+            return BootScreen(self.context)
+        if route == Route.DASHBOARD:
+            return DashboardScreen(self.context)
+        if route == Route.WIZARD:
+            return SetupWizardScreen(self.context)
+        if route == Route.MODELS:
+            return ModelsScreen(self.context)
+        if route == Route.AGENTS:
+            return AgentsScreen(self.context)
+        if route == Route.HATCH:
+            return HatchScreen(self.context)
+        if route == Route.CHAT:
+            return ChatScreen(self.context, initial_agent_id=agent_id)
+        if route == Route.STATUS:
+            return StatusScreen(self.context)
+        if route == Route.DOCTOR:
+            return DoctorScreen(self.context)
+        if route == Route.LOGS:
+            return LogsScreen(self.context)
+        if route == Route.HELP:
+            return HelpScreen(self.context)
+        raise ValueError(f"Unsupported route: {route}")
 
     def replace_root(self, route: Route) -> None:
         self.switch_screen(self._build_screen(route))
