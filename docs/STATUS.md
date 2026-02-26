@@ -127,3 +127,11 @@ Program outcome on 2026-02-25:
 4. Added CI workflow gate for control-plane tests and E2E smoke: `.github/workflows/control-plane-ci.yml`.
 5. Integrated in-TUI command bar with direct `teiken` command parsing, `Ctrl+P/Ctrl+K` focus, and chat-mode input fallback.
 6. Replaced single-screen TUI with routed multi-screen shell, shared theme/UI kit, global key contract, and grouped fuzzy command palette.
+
+### 1.20.1 Hotfix Notes (Post-Merge)
+
+1. Fixed TUI startup crash: `BootScreen` no longer assigns to reserved `Screen.log` property.
+2. Restored Python 3.11 compatibility in Telegram command formatting (removed backslash from f-string expression).
+3. Fixed lint issues in `tests/test_web_tool.py` (`F841`, `W293`) and wrapped long lines.
+4. Added `tests/conftest.py` root-path bootstrap to stabilize `app` imports in CI runners.
+5. Updated CI commands to use module execution and editable install for deterministic package resolution.

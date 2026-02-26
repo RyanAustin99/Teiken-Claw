@@ -726,7 +726,8 @@ class CommandRouter:
         
         status = "✅ Enabled" if job.enabled else "⏸️ Paused"
         lines.append(f"*Status:* {status}")
-        lines.append(f"*Name:* {job.name.replace('_', '\\_')}")
+        escaped_name = job.name.replace("_", "\\_")
+        lines.append(f"*Name:* {escaped_name}")
         
         trigger = job.trigger_type.value if hasattr(job.trigger_type, 'value') else str(job.trigger_type)
         lines.append(f"*Trigger:* {trigger}")

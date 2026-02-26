@@ -19,12 +19,13 @@ class BootScreen(BaseControlScreen):
 
     def __init__(self, context):
         super().__init__(context)
-        self.log = RichLog(highlight=False, markup=False, wrap=True, id="boot-log")
+        # Avoid clashing with Textual's Screen.log property.
+        self.boot_log = RichLog(highlight=False, markup=False, wrap=True, id="boot-log")
         self.status = Static("Starting...", id="boot-status")
         self._completed = False
 
     def compose_body(self) -> ComposeResult:
-        yield self.log
+        yield self.boot_log
         yield self.status
 
     def on_mount(self) -> None:
@@ -44,13 +45,13 @@ class BootScreen(BaseControlScreen):
             ("Starting supervisor", self._step_supervisor),
         ]
         for label, func in steps:
-            self.log.write(f"⏳ {label}")
+            self.boot_log.write(f"[...] {label}")
             self.status.update(label)
             try:
                 await func()
-                self.log.write(f"✅ {label}")
+                self.boot_log.write(f"[OK] {label}")
             except Exception as exc:
-                self.log.write(f"❌ {label}: {exc}")
+                self.boot_log.write(f"[FAIL] {label}: {exc}")
         self._completed = True
         self.status.update("Boot checks complete.")
         await asyncio.sleep(0.4)
