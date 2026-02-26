@@ -1,139 +1,196 @@
-"""Textual TUI for Teiken control plane."""
+"""Textual TUI application shell for Teiken control plane."""
 
 from __future__ import annotations
 
+from functools import partial
+from typing import Iterable
+
 from textual.app import App, ComposeResult
-from textual.containers import Container, Horizontal
-from textual.screen import Screen
-from textual.widgets import Button, Footer, Header, Input, RichLog, Static
+from textual.binding import Binding
+from textual.containers import Horizontal
+from textual.screen import ModalScreen, Screen
+from textual.widgets import Button, Static
 
 from app.control_plane.bootstrap import ControlPlaneContext
-from app.control_plane.domain.errors import ControlPlaneError
-from app.control_plane.tui.command_router import TuiCommandRouter
+from app.control_plane.tui.navigation import Route
+from app.control_plane.tui.palette import PaletteCommand, TeikenCommandProvider
+from app.control_plane.tui.screens import (
+    AgentsScreen,
+    BootScreen,
+    ChatScreen,
+    DashboardScreen,
+    DoctorScreen,
+    HatchScreen,
+    HelpScreen,
+    LogsScreen,
+    ModelsScreen,
+    SetupWizardScreen,
+    StatusScreen,
+)
 
 
-class HomeScreen(Screen):
-    """Main dashboard."""
+class QuitConfirmModal(ModalScreen[bool]):
+    """Confirmation modal shown when quitting with active runtimes."""
 
+    BINDINGS = [Binding("escape", "dismiss(False)", "Cancel")]
+
+    def compose(self) -> ComposeResult:
+        yield Static("Active runtimes detected. Quit and stop them gracefully?", classes="cp-card")
+        with Horizontal(classes="cp-row"):
+            yield Button("Cancel", id="quit-cancel")
+            yield Button("Quit", id="quit-confirm", variant="error")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "quit-confirm":
+            self.dismiss(True)
+        else:
+            self.dismiss(False)
+
+
+class TeikenControlPlaneApp(App):
+    """Multi-screen control-plane application with command palette and key standards."""
+
+    CSS_PATH = "theme.tcss"
+    COMMANDS = App.COMMANDS | {TeikenCommandProvider}
     BINDINGS = [
-        ("q", "app.quit", "Quit"),
-        ("ctrl+p", "focus_command", "Command"),
-        ("ctrl+k", "focus_command", "Command"),
-        ("ctrl+l", "clear_output", "Clear"),
+        Binding("f1", "open_help", "Help"),
+        Binding("escape", "back", "Back"),
+        Binding("ctrl+k", "command_palette", "Command Palette"),
+        Binding("ctrl+s", "save_context", "Save"),
+        Binding("ctrl+r", "refresh_screen", "Refresh"),
+        Binding("ctrl+l", "focus_logs", "Logs"),
+        Binding("ctrl+c", "request_quit", "Quit"),
+        # Compatibility alias.
+        Binding("ctrl+p", "command_palette", show=False),
     ]
 
     def __init__(self, context: ControlPlaneContext) -> None:
         super().__init__()
         self.context = context
-        self.router = TuiCommandRouter(context=context)
-        self.output = RichLog(id="cp-output", auto_scroll=True, highlight=False, markup=False, wrap=True)
-        self.prompt = Static(self.router.current_prompt(), id="cp-prompt")
-        self.command_input = Input(
-            placeholder="Type `teiken status`, `hatch --name claw`, or `chat start <agent>`",
-            id="cp-command",
-        )
-
-    def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
-        with Container():
-            yield Static("Teiken Control Plane", id="cp-title")
-            with Horizontal():
-                yield Button("Status", id="status")
-                yield Button("Doctor", id="doctor")
-                yield Button("Models", id="models")
-                yield Button("Agents", id="agents")
-                yield Button("Config", id="config")
-                yield Button("Logs", id="logs")
-                yield Button("Help", id="help")
-            yield Static(
-                f"Data directory (advanced): {self.context.paths.base_dir}",
-                id="cp-data-dir",
-            )
-            yield self.output
-            with Horizontal(id="cp-command-row"):
-                yield self.prompt
-                yield self.command_input
-        yield Footer()
 
     def on_mount(self) -> None:
-        self.command_input.focus()
-        self.output.write("Teiken command bar ready. Type `help` for available commands.")
+        self.push_screen(self._build_screen(Route.BOOT))
 
-    def action_focus_command(self) -> None:
-        self.command_input.focus()
-
-    def action_clear_output(self) -> None:
-        self.output.clear()
-        self.output.write("Output cleared.")
-
-    async def on_input_submitted(self, event: Input.Submitted) -> None:
-        command = event.value.strip()
-        event.input.value = ""
-        if not command:
-            return
-        await self._run_command(command)
-
-    async def _run_command(self, command: str, *, echo: bool = True) -> None:
-        if echo:
-            self.output.write(f"{self.router.current_prompt()} {command}")
-        try:
-            result = await self.router.execute(command)
-        except ControlPlaneError as exc:
-            self.output.write(f"error: {exc.user_message}")
-            if exc.details:
-                self.output.write(f"details: {exc.details}")
-            self._refresh_prompt()
-            return
-        except Exception as exc:  # pragma: no cover - defensive UI path
-            self.output.write(f"error: unexpected failure ({exc})")
-            self._refresh_prompt()
-            return
-
-        if result.clear_output:
-            self.output.clear()
-        if result.output:
-            for line in result.output.splitlines():
-                self.output.write(line)
-        if result.exit_app:
-            self.app.exit()
-            return
-        self._refresh_prompt()
-
-    def _refresh_prompt(self) -> None:
-        self.prompt.update(self.router.current_prompt())
-
-    async def on_button_pressed(self, event: Button.Pressed) -> None:
-        button_id = event.button.id or ""
-        mapping = {
-            "status": "status",
-            "doctor": "doctor",
-            "models": "models list",
-            "agents": "agents list",
-            "config": "config",
-            "logs": "logs --limit 20",
-            "help": "help",
+    def _build_screen(self, route: Route, *, agent_id: str | None = None) -> Screen:
+        screen_map = {
+            Route.BOOT: BootScreen(self.context),
+            Route.DASHBOARD: DashboardScreen(self.context),
+            Route.WIZARD: SetupWizardScreen(self.context),
+            Route.MODELS: ModelsScreen(self.context),
+            Route.AGENTS: AgentsScreen(self.context),
+            Route.HATCH: HatchScreen(self.context),
+            Route.CHAT: ChatScreen(self.context, initial_agent_id=agent_id),
+            Route.STATUS: StatusScreen(self.context),
+            Route.DOCTOR: DoctorScreen(self.context),
+            Route.LOGS: LogsScreen(self.context),
+            Route.HELP: HelpScreen(self.context),
         }
-        command = mapping.get(button_id)
-        if command:
-            await self._run_command(command, echo=False)
+        return screen_map[route]
 
+    def replace_root(self, route: Route) -> None:
+        self.switch_screen(self._build_screen(route))
 
-class TeikenControlPlaneApp(App):
-    """Textual application wrapper."""
+    def open_route(self, route: Route) -> None:
+        if route == Route.DASHBOARD and self.screen_stack:
+            self.switch_screen(self._build_screen(Route.DASHBOARD))
+            return
+        self.push_screen(self._build_screen(route))
 
-    CSS = """
-    #cp-title { text-style: bold; margin: 1 0; }
-    #cp-data-dir { margin: 1 0; color: cyan; }
-    #cp-output { margin: 1 0; height: 1fr; border: round #666; padding: 1; }
-    #cp-command-row { height: auto; margin: 1 0 0 0; }
-    #cp-prompt { width: 20; content-align: center middle; color: cyan; }
-    #cp-command { width: 1fr; }
-    """
+    def open_chat(self, agent_id: str | None = None) -> None:
+        self.push_screen(self._build_screen(Route.CHAT, agent_id=agent_id))
 
-    def __init__(self, context: ControlPlaneContext) -> None:
-        super().__init__()
-        self.context = context
+    def action_open_help(self) -> None:
+        self.push_screen(self._build_screen(Route.HELP))
 
-    def on_mount(self) -> None:
-        self.push_screen(HomeScreen(context=self.context))
+    def action_back(self) -> None:
+        if len(self.screen_stack) > 1:
+            self.pop_screen()
 
+    def action_refresh_screen(self) -> None:
+        current = self.screen
+        refresh_fn = getattr(current, "refresh_data", None)
+        if callable(refresh_fn):
+            self.run_worker(refresh_fn(), group="screen-refresh", exclusive=True)
+
+    def action_focus_logs(self) -> None:
+        self.open_route(Route.LOGS)
+
+    def action_save_context(self) -> None:
+        current = self.screen
+        saver = getattr(current, "save_current", None)
+        if callable(saver):
+            self.run_worker(saver(), group="screen-save", exclusive=True)
+
+    def action_request_quit(self) -> None:
+        snapshot = self.context.runtime_supervisor.snapshot()
+        if snapshot.runtimes:
+            self.push_screen(QuitConfirmModal(), callback=self._handle_quit_decision)
+            return
+        self.exit()
+
+    def _handle_quit_decision(self, should_quit: bool) -> None:
+        if not should_quit:
+            return
+
+        async def _shutdown_then_exit() -> None:
+            await self.context.runtime_supervisor.shutdown_gracefully()
+            self.exit()
+
+        self.run_worker(_shutdown_then_exit(), group="graceful-shutdown", exclusive=True)
+
+    def get_palette_commands(self) -> Iterable[PaletteCommand]:
+        commands: list[PaletteCommand] = [
+            PaletteCommand("Go to Dashboard", "Navigation", partial(self.open_route, Route.DASHBOARD), "Open home screen"),
+            PaletteCommand("Setup Wizard", "Navigation", partial(self.open_route, Route.WIZARD), "Run guided setup"),
+            PaletteCommand("Models", "Navigation", partial(self.open_route, Route.MODELS), "Manage Ollama models"),
+            PaletteCommand("Agents", "Navigation", partial(self.open_route, Route.AGENTS), "Manage agent registry"),
+            PaletteCommand("Hatch", "Navigation", partial(self.open_route, Route.HATCH), "Create/start agent"),
+            PaletteCommand("Chat", "Navigation", partial(self.open_route, Route.CHAT), "Open chat screen"),
+            PaletteCommand("Status", "Diagnostics", partial(self.open_route, Route.STATUS), "Detailed health board"),
+            PaletteCommand("Doctor", "Diagnostics", partial(self.open_route, Route.DOCTOR), "Run checks and fixes"),
+            PaletteCommand("Logs", "Diagnostics", partial(self.open_route, Route.LOGS), "View and follow logs", key_hint="Ctrl+L"),
+            PaletteCommand("Refresh Current Screen", "Runtime", self.action_refresh_screen, "Refresh active view", key_hint="Ctrl+R"),
+            PaletteCommand("Save Current Screen", "Runtime", self.action_save_context, "Save current form if supported", key_hint="Ctrl+S"),
+            PaletteCommand("Start Dev Server", "Runtime", self._start_server, "Start server process"),
+            PaletteCommand("Stop Dev Server", "Runtime", self._stop_server, "Stop server process"),
+            PaletteCommand("Restart Dev Server", "Runtime", self._restart_server, "Restart server process"),
+            PaletteCommand("Help", "Navigation", self.action_open_help, "Show keybindings", key_hint="F1"),
+            PaletteCommand("Back", "Navigation", self.action_back, "Go back one screen", key_hint="Esc"),
+            PaletteCommand("Quit", "Runtime", self.action_request_quit, "Exit safely", key_hint="Ctrl+C"),
+        ]
+
+        try:
+            current = self.screen
+        except Exception:
+            current = None
+        primary_actions = getattr(current, "PRIMARY_ACTIONS", ())
+        handle_action = getattr(current, "handle_primary_action", None)
+        if primary_actions and callable(handle_action):
+            for label, action_id in primary_actions:
+                commands.append(
+                    PaletteCommand(
+                        title=label,
+                        group="Actions",
+                        callback=partial(self._run_screen_action, action_id),
+                        help_text=f"Run action: {label}",
+                    )
+                )
+        return commands
+
+    def _run_screen_action(self, action_id: str) -> None:
+        current = self.screen
+        handler = getattr(current, "handle_primary_action", None)
+        if callable(handler):
+            self.run_worker(handler(action_id), group=f"action-{action_id}", exclusive=False)
+
+    def _start_server(self) -> None:
+        self.context.runtime_supervisor.start_dev_server()
+        self.action_refresh_screen()
+
+    def _stop_server(self) -> None:
+        self.context.runtime_supervisor.stop_dev_server()
+        self.action_refresh_screen()
+
+    def _restart_server(self) -> None:
+        self.context.runtime_supervisor.restart_dev_server()
+        self.action_refresh_screen()

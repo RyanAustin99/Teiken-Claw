@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Rate limiting and outbound queue for Telegram messages.
 
@@ -19,6 +21,8 @@ try:
     from aiolimiter import Limiter
     HAS_AIOLIMITER = True
 except ImportError:
+    # Keep annotation/runtime references valid in environments without aiolimiter.
+    Limiter = Any  # type: ignore[assignment,misc]
     HAS_AIOLIMITER = False
 
 from app.config.logging import get_logger

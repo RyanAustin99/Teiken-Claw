@@ -45,6 +45,7 @@ class DoctorService:
                     status=CheckStatus.FAIL,
                     summary="Storage path is not writable",
                     suggestion="Check folder permissions or choose a different --data-dir",
+                    fix_action="open_config",
                     details={"error": str(exc)},
                 )
             )
@@ -67,6 +68,7 @@ class DoctorService:
                         status=CheckStatus.FAIL,
                         summary="Ollama endpoint unreachable",
                         suggestion="Run `ollama serve` or update endpoint via `teiken config`",
+                        fix_action="open_config",
                     )
                 )
         except Exception as exc:
@@ -76,6 +78,7 @@ class DoctorService:
                     status=CheckStatus.FAIL,
                     summary="Ollama endpoint check failed",
                     suggestion="Verify Ollama is running and endpoint is correct",
+                    fix_action="open_config",
                     details={"error": str(exc)},
                 )
             )
@@ -98,6 +101,7 @@ class DoctorService:
                         status=CheckStatus.WARN,
                         summary=f"Default model missing: {config.default_model}",
                         suggestion=f"Run `teiken models pull {config.default_model}` or select another default",
+                        fix_action="open_models",
                     )
                 )
         except Exception as exc:
@@ -107,6 +111,7 @@ class DoctorService:
                     status=CheckStatus.WARN,
                     summary="Could not verify default model",
                     suggestion="Run `teiken models` to inspect installed models",
+                    fix_action="open_models",
                     details={"error": str(exc)},
                 )
             )
@@ -122,6 +127,7 @@ class DoctorService:
                     status=CheckStatus.WARN,
                     summary="Dev server not running",
                     suggestion="Run `teiken status` then `teiken` dashboard action to start server",
+                    fix_action="restart_server",
                 )
             )
 
@@ -143,6 +149,7 @@ class DoctorService:
                         status=CheckStatus.FAIL,
                         summary="Model validation failed",
                         suggestion="Try another model in `teiken models`",
+                        fix_action="open_models",
                     )
                 )
         except Exception as exc:
@@ -152,6 +159,7 @@ class DoctorService:
                     status=CheckStatus.FAIL,
                     summary="Model did not respond",
                     suggestion="Check Ollama and pull/select a valid model",
+                    fix_action="open_models",
                     details={"error": str(exc)},
                 )
             )

@@ -141,6 +141,11 @@ class RuntimeSupervisor:
             runtimes=entries,
         )
 
+    async def snapshot_async(self) -> SupervisorSnapshot:
+        """Async-friendly snapshot hook for polling UIs."""
+        await asyncio.sleep(0)
+        return self.snapshot()
+
     async def shutdown_gracefully(self) -> None:
         for agent_id in list(self._runners.keys()):
             await self.stop_agent(agent_id)

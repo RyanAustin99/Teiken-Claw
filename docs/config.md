@@ -1,6 +1,6 @@
 # Configuration Guide
 
-Teiken Claw 1.20.0 uses a layered terminal-managed configuration model:
+Teiken Claw 1.20.1 uses a layered terminal-managed configuration model:
 
 1. CLI `--data-dir` (for path override only)
 2. Environment variables
@@ -36,6 +36,9 @@ Use `teiken config` or TUI Config screen to set:
 - Workspace path
 - Safety toggles
 - Data directory (advanced)
+
+Preferred UX path is the Setup Wizard screen (Step 1..6) launched on first run,
+with `Ctrl+S` save behavior on editable screens.
 
 Example:
 

@@ -57,6 +57,12 @@ Top-level command interface:
 
 TUI command bar:
 
-- `teiken` launches the Textual dashboard with an integrated command bar.
-- The command bar accepts `teiken` commands directly (for example `teiken status`, `agents list`, `chat start <agent>`).
-- `Ctrl+P` and `Ctrl+K` focus the command bar.
+- `teiken` launches the Textual multi-screen control plane.
+- The control plane uses explicit screen actions + a global command palette.
+- `Ctrl+K` opens command palette (fuzzy search) with grouped commands:
+Navigation / Actions / Diagnostics / Runtime.
+- Global key contract:
+`F1` help, `Esc` back, `Ctrl+S` save, `Ctrl+R` refresh, `Ctrl+L` logs, `Ctrl+C` graceful quit.
+
+Screen map:
+`Boot -> Dashboard/Setup Wizard -> Models -> Agents -> Hatch -> Chat -> Status -> Doctor -> Logs`

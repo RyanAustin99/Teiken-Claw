@@ -1,0 +1,92 @@
+Screen {
+    background: #0e1116;
+    color: #f2f5f8;
+}
+
+.cp-screen-root {
+    padding: 1 2;
+}
+
+.cp-screen-title {
+    text-style: bold;
+    color: #ffffff;
+    margin: 0 0 1 0;
+}
+
+.cp-screen-subtitle {
+    color: #9ba7b4;
+    margin: 0 0 1 0;
+}
+
+.cp-primary-actions {
+    height: auto;
+    margin: 0 0 1 0;
+}
+
+.cp-primary-button {
+    margin: 0 1 0 0;
+    min-width: 14;
+}
+
+.cp-screen-body {
+    height: 1fr;
+}
+
+.cp-card-grid {
+    height: auto;
+    margin: 0 0 1 0;
+}
+
+.cp-card {
+    border: round #465464;
+    background: #151b23;
+    color: #eaf0f6;
+    padding: 1 1;
+    margin: 0 1 1 0;
+    width: 1fr;
+    min-height: 8;
+}
+
+.cp-muted {
+    color: #91a0af;
+}
+
+.cp-row {
+    height: auto;
+    margin: 0 0 1 0;
+}
+
+.cp-key-hints {
+    color: #6e8095;
+    margin: 1 0 0 0;
+}
+
+#error-banner {
+    border: round #8a2f2f;
+    background: #3a1717;
+    color: #ffd7d7;
+    padding: 1;
+    margin: 0 0 1 0;
+}
+
+.hidden {
+    display: none;
+}
+
+#boot-log,
+#models-progress,
+#chat-transcript,
+#logs-view {
+    border: round #425567;
+    background: #111720;
+    padding: 1;
+    height: 1fr;
+}
+
+#models-table,
+#agents-table,
+#doctor-table {
+    height: 1fr;
+    margin: 0 0 1 0;
+}
+

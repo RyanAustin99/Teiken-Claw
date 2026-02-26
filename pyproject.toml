@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "teiken-claw"
-version = "1.20.0"
+version = "1.20.1"
 description = "Teiken Claw terminal-first AI control plane"
 requires-python = ">=3.11"
 dependencies = []

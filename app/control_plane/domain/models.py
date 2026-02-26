@@ -106,6 +106,7 @@ class DoctorCheck(BaseModel):
     status: CheckStatus
     summary: str
     suggestion: Optional[str] = None
+    fix_action: Optional[str] = None
     details: Dict[str, str] = Field(default_factory=dict)
 
 

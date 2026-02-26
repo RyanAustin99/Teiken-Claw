@@ -20,6 +20,12 @@ class SessionService:
     def list_sessions(self, agent_id: str, limit: int = 50) -> List[SessionRecord]:
         return self.repo.list_sessions(agent_id=agent_id, limit=limit)
 
+    def rename_session(self, session_id: str, title: str) -> Optional[SessionRecord]:
+        return self.repo.rename_session(session_id=session_id, title=title)
+
+    def delete_session(self, session_id: str) -> bool:
+        return self.repo.delete_session(session_id=session_id)
+
     def append_user_message(self, session_id: str, content: str) -> SessionMessageRecord:
         return self.repo.append_message(session_id=session_id, role="user", content=content)
 
