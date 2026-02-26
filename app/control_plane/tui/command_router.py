@@ -214,9 +214,7 @@ class TuiCommandRouter:
 
             if "--yes" not in args[2:]:
                 raise ValidationError("`agents delete` requires explicit confirmation.", details={"hint": "Use --yes"})
-            deleted = self.context.agent_service.delete_agent(agent.id)
-            if deleted:
-                self.context.audit_service.log("agent.delete", target=agent.id, details={}, actor="tui")
+            deleted = await self.context.runtime_supervisor.delete_agent(agent.id)
             if self.active_agent_id == agent.id:
                 self.active_agent_id = None
                 self.active_session_id = None

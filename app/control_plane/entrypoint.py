@@ -457,9 +457,7 @@ def agents_delete(ctx: typer.Context, agent_id: str, yes: bool = typer.Option(Fa
     cp = _ctx_data(ctx)
     if not yes and not typer.confirm(f"Delete agent {agent_id}?", default=False):
         raise typer.Exit(code=1)
-    deleted = cp.agent_service.delete_agent(agent_id)
-    if deleted:
-        cp.audit_service.log("agent.delete", target=agent_id, details={}, actor="cli")
+    deleted = _run_async(cp.runtime_supervisor.delete_agent(agent_id))
     console.print("Deleted" if deleted else "Agent not found")
 
 

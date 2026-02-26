@@ -130,6 +130,9 @@ Program outcome on 2026-02-25:
 | 2026-02-26 | `venv\\Scripts\\python.exe -m pytest -q tests/control_plane` | PASS | `27 passed` after 1.20.3 install-time boot additions |
 | 2026-02-26 | `venv\\Scripts\\python.exe -m flake8 --select=E9,F63,F7 --show-source --statistics app/ tests/ scripts/` | PASS | No syntax/runtime-lint blockers |
 | 2026-02-26 | `venv\\Scripts\\python.exe -m pytest -q` | PASS | `669 passed, 1 skipped` after 1.20.3 implementation |
+| 2026-02-26 | `venv\\Scripts\\python.exe -m pytest -q tests/control_plane` | PASS | `30 passed` after hatch-delete crash hardening + tool execution loop coverage |
+| 2026-02-26 | `venv\\Scripts\\python.exe -m pytest -q` | PASS | `672 passed, 1 skipped` after agent delete/runtime cleanup and tool envelope execution changes |
+| 2026-02-26 | `venv\\Scripts\\python.exe -m flake8 --select=E9,F63,F7 --show-source --statistics app/ tests/ scripts/` | PASS | CI lint parity check remains green after control-plane fixes |
 
 ### Phase 12/13 Closure Notes
 
@@ -166,6 +169,18 @@ Program outcome on 2026-02-25:
    - onboarding state machine and prompt composition
    - hatch failure to `crashed` + idempotent retry
    - chat path enforcement of conversation service (no direct fallback)
+8. Added strict terminal chat tool execution contract:
+   - only execute `<TEIKEN_TOOL_CALL>{...}</TEIKEN_TOOL_CALL>` envelopes
+   - ignore markdown code-fence pseudo-calls
+   - enforce workspace-relative paths with traversal protection
+9. Added runtime-safe agent deletion flow through `RuntimeSupervisor.delete_agent(...)`:
+   - stops runner best-effort
+   - clears runtime state + sessions
+   - deletes agent record and records audit event
+10. Added transcript-level tool receipts and regression tests for:
+   - real file creation from tool envelope
+   - no execution for markdown-fence tool text
+   - delete-running-agent path not crashing TUI/runtime
 
 ### 1.20.3 Install-Time Dynamic Boot Notes
 

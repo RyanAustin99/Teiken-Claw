@@ -174,6 +174,21 @@ class SessionRepository:
             conn.commit()
         return cursor.rowcount > 0
 
+    def delete_sessions_for_agent(self, agent_id: str) -> int:
+        with closing(self._connect()) as conn:
+            conn.execute(
+                """
+                DELETE FROM agent_messages
+                WHERE session_id IN (
+                    SELECT id FROM agent_sessions WHERE agent_id = ?
+                )
+                """,
+                (agent_id,),
+            )
+            cursor = conn.execute("DELETE FROM agent_sessions WHERE agent_id = ?", (agent_id,))
+            conn.commit()
+        return int(cursor.rowcount)
+
     def append_message(
         self,
         session_id: str,

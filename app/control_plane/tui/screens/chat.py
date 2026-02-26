@@ -117,7 +117,7 @@ class ChatScreen(BaseControlScreen):
                     message=text,
                 )
                 elapsed = (time.perf_counter() - start) * 1000
-                self.transcript.write(sanitize_terminal_text(f"assistant> {response}"))
+                self._load_transcript()
                 self.state_line.update(f"[OK] Responded in {elapsed:.0f} ms")
             except Exception as exc:
                 self.show_error(exc)

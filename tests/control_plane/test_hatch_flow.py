@@ -38,3 +38,17 @@ def test_hatch_success_creates_session_and_active_chat(tmp_path):
     assert "Started runtime and opened chat session" in result.output
     assert router.active_agent_id is not None
     assert router.active_session_id is not None
+
+
+def test_delete_running_agent_cleans_runtime_without_crash(tmp_path):
+    context = build_context(cli_data_dir=str(tmp_path / "cp_data"))
+    router = TuiCommandRouter(context)
+
+    hatch = _run(router.execute("hatch --name to-delete"))
+    assert "Started runtime and opened chat session" in hatch.output
+
+    deleted = _run(router.execute("agents delete to-delete --yes"))
+    assert "Deleted: to-delete" in deleted.output
+    assert context.agent_service.get_agent("to-delete") is None
+    snapshot = context.runtime_supervisor.snapshot()
+    assert len(snapshot.runtimes) == 0

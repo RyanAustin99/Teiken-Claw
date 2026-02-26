@@ -96,9 +96,7 @@ class AgentsScreen(BaseControlScreen):
             self.context.agent_service.set_default_agent(agent.id)
             self.context.audit_service.log("agent.set_default", target=agent.id, details={}, actor="tui")
         elif action_id == "agents-delete":
-            deleted = self.context.agent_service.delete_agent(agent.id)
-            if deleted:
-                self.context.audit_service.log("agent.delete", target=agent.id, details={}, actor="tui")
+            await self.context.runtime_supervisor.delete_agent(agent.id)
         await self.refresh_data()
 
     async def _save_edit(self) -> None:

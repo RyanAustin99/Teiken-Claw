@@ -117,6 +117,21 @@ class RuntimeSupervisor:
             self.audit_service.log("agent.restart", target=agent_id, details={}, actor="supervisor")
         return entry
 
+    async def delete_agent(self, agent_id: str) -> bool:
+        """Stop runtime state and delete agent/session persistence safely."""
+        try:
+            await self.stop_agent(agent_id)
+        except Exception:
+            # Continue with deletion cleanup even if stop path fails.
+            self._runners.pop(agent_id, None)
+        self._runners.pop(agent_id, None)
+        self._last_errors.pop(agent_id, None)
+        self.session_service.delete_sessions_for_agent(agent_id)
+        deleted = self.agent_service.delete_agent(agent_id)
+        if deleted and self.audit_service:
+            self.audit_service.log("agent.delete", target=agent_id, details={}, actor="supervisor")
+        return deleted
+
     async def restart_all(self) -> SupervisorSnapshot:
         for agent_id in list(self._runners.keys()):
             await self.restart_agent(agent_id)
@@ -156,6 +171,8 @@ class RuntimeSupervisor:
 
     async def _chat_with_limits(self, agent_id: str, message: str, session_id: Optional[str]) -> str:
         agent = self.agent_service.get_agent(agent_id)
+        if not agent:
+            raise ValidationError("Unknown agent for runtime chat.", details={"agent_id": agent_id})
         self._inflight += 1
         try:
             if not session_id:
@@ -163,16 +180,28 @@ class RuntimeSupervisor:
                     "Session ID required for agent-contextual chat.",
                     details={"agent_id": agent_id},
                 )
-            response = await self.conversation_service.generate_response(
+            conversation = await self.conversation_service.generate_response_with_tools(
                 agent_id=agent_id,
                 session_id=session_id,
                 user_message=message,
             )
+            for tool_event in conversation.tool_events:
+                self.session_service.append_assistant_message(
+                    session_id=session_id,
+                    content=tool_event.receipt(),
+                    tool_name=tool_event.tool,
+                    tool_ok=tool_event.ok,
+                    tool_elapsed_ms=tool_event.elapsed_ms,
+                )
             self.agent_service.set_status(agent_id, RuntimeStatus.RUNNING)
-            return response
+            return conversation.response
         except Exception as exc:
             self._last_errors[agent_id] = str(exc)
-            self.agent_service.set_status(agent_id, RuntimeStatus.DEGRADED, last_error=str(exc))
+            try:
+                if self.agent_service.get_agent(agent_id):
+                    self.agent_service.set_status(agent_id, RuntimeStatus.DEGRADED, last_error=str(exc))
+            except Exception:
+                pass
             raise
         finally:
             self._inflight = max(0, self._inflight - 1)

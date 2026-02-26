@@ -32,6 +32,9 @@ class SessionService:
     def delete_session(self, session_id: str) -> bool:
         return self.repo.delete_session(session_id=session_id)
 
+    def delete_sessions_for_agent(self, agent_id: str) -> int:
+        return self.repo.delete_sessions_for_agent(agent_id=agent_id)
+
     def append_user_message(self, session_id: str, content: str) -> SessionMessageRecord:
         return self.repo.append_message(session_id=session_id, role="user", content=content)
 

@@ -4,6 +4,7 @@ import pytest
 
 from app.control_plane.bootstrap import build_context
 from app.control_plane.domain.errors import ValidationError
+from app.control_plane.services.agent_conversation_service import ConversationResponse
 
 
 def _run(coro):
@@ -24,16 +25,16 @@ def test_runtime_supervisor_chat_uses_conversation_service_path(tmp_path):
 
     calls = {"conversation": 0}
 
-    async def _fake_generate_response(agent_id: str, session_id: str, user_message: str) -> str:
+    async def _fake_generate_response_with_tools(agent_id: str, session_id: str, user_message: str) -> ConversationResponse:
         calls["conversation"] += 1
         assert agent_id == agent.id
         assert session_id == session.id
-        return "from-conversation-service"
+        return ConversationResponse(response="from-conversation-service")
 
     async def _fail_direct_chat(*_args, **_kwargs):  # pragma: no cover - defensive assertion path
         raise AssertionError("Direct ModelService.chat path should not be used")
 
-    context.conversation_service.generate_response = _fake_generate_response
+    context.conversation_service.generate_response_with_tools = _fake_generate_response_with_tools
     context.model_service.chat = _fail_direct_chat
 
     response = _run(context.runtime_supervisor.chat(agent_id=agent.id, session_id=session.id, message="hello"))
