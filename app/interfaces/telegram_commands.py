@@ -476,7 +476,10 @@ class CommandRouter:
             return "\n".join(lines)
         except Exception as e:
             logger.error(f"Memory review error: {e}", extra={"event": "memory_review_error"})
-            return f"❌ Error listing memories: {str(e)[:50]}"
+            error_text = str(e).lower()
+            if "no such table" in error_text and "memory_records" in error_text:
+                return "Recent Memories\n\nNo memories found."
+            return f"Error listing memories: {str(e)[:50]}"
     
     async def _handle_memory_search(self, chat_id: int, query: str) -> str:
         """Handle memory search subcommand."""
@@ -502,7 +505,10 @@ class CommandRouter:
             return "\n".join(lines)
         except Exception as e:
             logger.error(f"Memory search error: {e}", extra={"event": "memory_search_error"})
-            return f"❌ Error searching memories: {str(e)[:50]}"
+            error_text = str(e).lower()
+            if "no such table" in error_text and "memory_records" in error_text:
+                return f"Memory Search\n\nNo results for: {query}"
+            return f"Error searching memories: {str(e)[:50]}"
     
     async def _handle_memory_forget(self, chat_id: int, memory_id: str) -> str:
         """Handle memory forget subcommand."""
