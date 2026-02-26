@@ -473,8 +473,7 @@ function Get-TeikenStatusTicker {
         return Format-TeikenText -State $State -Text $okGlyph -Style 'Success'
     }
 
-    if ($State.Ui.Frame % 4 -lt 2) { return $pulseA }
-    return $pulseB
+    return $pulseA
 }
 
 function Get-TeikenStyledTopBorder {
@@ -491,21 +490,6 @@ function Get-TeikenStyledTopBorder {
         $chars.Add('━')
     }
 
-    if (-not $Failure) {
-        $comet = $State.Ui.CometIndex % $innerWidth
-        for ($offset = 0; $offset -lt 3; $offset++) {
-            $index = $comet - $offset
-            if ($index -lt 0) { $index += $innerWidth }
-            if ($offset -eq 0) {
-                $chars[$index] = Format-TeikenText -State $State -Text '━' -Style 'OrangeBright'
-            } elseif ($offset -eq 1) {
-                $chars[$index] = Format-TeikenText -State $State -Text '━' -Style 'Orange'
-            } else {
-                $chars[$index] = Format-TeikenText -State $State -Text '━' -Style 'Muted'
-            }
-        }
-    }
-
     $borderStyle = if ($Failure) { 'BorderError' } else { 'Border' }
     $left = Format-TeikenText -State $State -Text '┏' -Style $borderStyle
     $right = Format-TeikenText -State $State -Text '┓' -Style $borderStyle
@@ -514,9 +498,9 @@ function Get-TeikenStyledTopBorder {
         $middle = '━' * $innerWidth
     }
 
-    if (-not $Failure -and $State.TerminalCaps.Ansi) {
+    if ($State.TerminalCaps.Ansi -and -not $Failure) {
         $middle = "{0}{1}{2}" -f $State.Theme.Border, $middle, $State.Theme.Reset
-    } elseif ($Failure -and $State.TerminalCaps.Ansi) {
+    } elseif ($State.TerminalCaps.Ansi -and $Failure) {
         $middle = "{0}{1}{2}" -f $State.Theme.BorderError, $middle, $State.Theme.Reset
     }
 
@@ -635,9 +619,6 @@ function Get-TeikenProgressBar {
     $fillCount = [Math]::Min($Width, [Math]::Max(0, $fillCount))
 
     $sheen = -1
-    if ($fillCount -ge 10) {
-        $sheen = $State.Ui.Frame % [Math]::Max(1, $fillCount)
-    }
 
     $segments = New-Object System.Collections.Generic.List[string]
     for ($i = 0; $i -lt $Width; $i++) {
@@ -734,21 +715,13 @@ function Render-TeikenFrame {
 
     try {
         $now = [DateTime]::UtcNow
-        if (($now - $State.Ui.LastRender).TotalMilliseconds -lt 120) {
+        if (($now - $State.Ui.LastRender).TotalMilliseconds -lt 250) {
             return
         }
 
         Process-TeikenUiInput -State $State
 
         $State.Ui.Frame++
-        $State.Ui.SpinnerIndex = ($State.Ui.SpinnerIndex + 1) % $State.Ui.SpinnerFrames.Count
-        if ($State.Ui.Frame % 2 -eq 0) {
-            $State.Ui.ShimmerIndex++
-        }
-        $State.Ui.CometIndex++
-        if ($State.Ui.Frame % 6 -eq 0) {
-            $State.Ui.PulseOn = -not $State.Ui.PulseOn
-        }
 
         try {
             $State.TerminalCaps.Width = [Console]::WindowWidth
@@ -767,46 +740,42 @@ function Render-TeikenFrame {
 
     $frameLines.Add((Get-TeikenStyledTopBorder -State $State -Width $width -Failure $failure))
 
-    $titleLine = if ($State.Ui.IntroPhase -ge 2) {
-        Get-TeikenTitleWordmark -State $State -ShimmerIndex $State.Ui.ShimmerIndex
-    } else {
-        Format-TeikenText -State $State -Text 'TEIKEN CLAW' -Style 'Teal'
-    }
-
-    $subtitle = Format-TeikenText -State $State -Text ("Environment Setup • v{0} • Windows" -f $State.Version) -Style 'Muted'
-
     $modeLabel = if ($State.Ui.VerboseEnabled -and $State.Mode -eq 'CINEMATIC') { 'VERBOSE' } else { $State.Mode }
     $ansiLabel = if (-not $State.TerminalCaps.Ansi) { 'OFF' } elseif ($State.TerminalCaps.TrueColor) { 'TRUECOLOR' } else { 'BASIC' }
-    if ($width -lt 110) {
-        $modeLabel = $modeLabel.Replace('CINEMATIC', 'CINE')
-        $ansiLabel = $ansiLabel.Replace('TRUECOLOR', 'TC')
-    }
-
     $metaEnv = if ($env:TEIKEN_ENV) { $env:TEIKEN_ENV } else { 'local' }
     $metaGit = if ($State.Runtime.GitSha) { $State.Runtime.GitSha } else { '--------' }
-    $meta = "v{0} • env={1} • git={2} • mode={3} • ansi={4}" -f $State.Version, $metaEnv, $metaGit, $modeLabel, $ansiLabel
-    $metaStyled = Format-TeikenText -State $State -Text $meta -Style 'Muted'
-    $tagline = (Format-TeikenText -State $State -Text 'Local-first agent service • Ollama-ready • ' -Style 'Muted') + (Format-TeikenText -State $State -Text 'Diagnostics-first' -Style 'Orange')
+
     $innerWidth = [Math]::Max(4, $width - 4)
-    $frameLines.Add(("┃  {0}{1}" -f $titleLine, ' ' * [Math]::Max(0, $innerWidth - (Get-TeikenVisibleLength $titleLine))))
-    $frameLines.Add(("┃  {0}{1}" -f $subtitle, ' ' * [Math]::Max(0, $innerWidth - (Get-TeikenVisibleLength $subtitle))))
-    $frameLines.Add(("┃  {0}{1}" -f $metaStyled, ' ' * [Math]::Max(0, $innerWidth - (Get-TeikenVisibleLength $metaStyled))))
+    $tree = '/\\'
+    $logoLines = @(
+        (Format-TeikenText -State $State -Text ("{0}   ████████╗███████╗██╗██╗  ██╗███████╗███╗   ██╗   {0}" -f $tree) -Style 'Teal'),
+        (Format-TeikenText -State $State -Text ("{0}   ╚══██╔══╝██╔════╝██║██║ ██╔╝██╔════╝████╗  ██║   {0}" -f $tree) -Style 'Teal'),
+        (Format-TeikenText -State $State -Text ("{0}      ██║   █████╗  ██║█████╔╝ █████╗  ██╔██╗ ██║   {0}" -f $tree) -Style 'Teal'),
+        (Format-TeikenText -State $State -Text ("{0}      ██║   ██╔══╝  ██║██╔═██╗ ██╔══╝  ██║╚██╗██║   {0}" -f $tree) -Style 'Teal'),
+        (Format-TeikenText -State $State -Text ("{0}      ██║   ███████╗██║██║  ██╗███████╗██║ ╚████║   {0}" -f $tree) -Style 'Teal'),
+        (Format-TeikenText -State $State -Text ("{0}      ╚═╝   ╚══════╝╚═╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═══╝   {0}" -f $tree) -Style 'Teal')
+    )
 
-    if ($width -ge 90 -and $State.Ui.IntroPhase -ge 3) {
-        $line = if ($width -ge 110) { $tagline } else { Format-TeikenText -State $State -Text 'Local-first • Ollama-ready • Diagnostics-first' -Style 'Muted' }
-        $frameLines.Add(("┃  {0}{1}" -f $line, ' ' * [Math]::Max(0, $innerWidth - (Get-TeikenVisibleLength $line))))
-    } else {
-        $frameLines.Add("┃  " + (' ' * $innerWidth))
+    foreach ($logoLine in $logoLines) {
+        $line = $logoLine
+        if ((Get-TeikenVisibleLength -Text $line) -gt $innerWidth) {
+            $line = Get-TeikenMiddleEllipsis -Text (Strip-Ansi -Text $line) -MaxLength $innerWidth
+            if ($State.TerminalCaps.Ansi) {
+                $line = Format-TeikenText -State $State -Text $line -Style 'Teal'
+            }
+        }
+        $frameLines.Add(("┃  {0}{1}" -f $line, ' ' * [Math]::Max(0, $innerWidth - (Get-TeikenVisibleLength -Text $line))))
     }
 
-    $frameLines.Add("┃  " + (' ' * $innerWidth))
+    $meta = Format-TeikenText -State $State -Text ("Teiken Claw Setup  •  v{0}  •  env={1}  •  git={2}  •  mode={3}  •  ansi={4}" -f $State.Version, $metaEnv, $metaGit, $modeLabel, $ansiLabel) -Style 'Muted'
+    if ((Get-TeikenVisibleLength -Text $meta) -gt $innerWidth) {
+        $meta = Get-TeikenMiddleEllipsis -Text (Strip-Ansi -Text $meta) -MaxLength $innerWidth
+        if ($State.TerminalCaps.Ansi) {
+            $meta = Format-TeikenText -State $State -Text $meta -Style 'Muted'
+        }
+    }
+    $frameLines.Add(("┃  {0}{1}" -f $meta, ' ' * [Math]::Max(0, $innerWidth - (Get-TeikenVisibleLength -Text $meta))))
     $frameLines.Add("┗" + ('━' * [Math]::Max(2, $width - 2)) + "┛")
-
-    if ($width -ge 90) {
-        $shadowWidth = [Math]::Max(10, $width - 6)
-        $shadow = (' ' * 2) + (Format-TeikenText -State $State -Text (('▁' * $shadowWidth)) -Style 'Muted')
-        $frameLines.Add($shadow)
-    }
 
     $ticker = Get-TeikenStatusTicker -State $State
     $statusLine = "{0} Mode: {1}   ANSI: {2}   Shell: {3}   Logs: {4}" -f $ticker, $modeLabel, $ansiLabel, $State.TerminalCaps.Shell, (Get-TeikenMiddleEllipsis -Text $State.Artifacts.MainLogPath -MaxLength ([Math]::Max(20, $width - 62)))
@@ -827,20 +796,13 @@ function Render-TeikenFrame {
             'fail' { Format-TeikenText -State $State -Text '✗' -Style 'Error' }
             'skipped' { Format-TeikenText -State $State -Text '·' -Style 'Muted' }
             'running' {
-                if ($State.TerminalCaps.Ansi -and $State.TerminalCaps.Unicode) {
-                    Format-TeikenText -State $State -Text $State.Ui.SpinnerFrames[$State.Ui.SpinnerIndex] -Style 'TealBright'
-                } else {
-                    '|'
-                }
+                Format-TeikenText -State $State -Text (if ($State.TerminalCaps.Unicode) { '…' } else { '.' }) -Style 'TealBright'
             }
             default { Format-TeikenText -State $State -Text '•' -Style 'Muted' }
         }
 
         $idx = '{0:00}/{1:00}' -f $step.Index, $step.Total
         $name = $step.Name
-        if ($step.Status -eq 'running' -and $State.Ui.PulseOn) {
-            $name = Format-TeikenText -State $State -Text $name -Style 'TealBright'
-        }
 
         $hint = if ($step.Hint) { $step.Hint } elseif ($step.CommandPreview) { $step.CommandPreview } else { '' }
         $hint = Get-TeikenMiddleEllipsis -Text $hint -MaxLength 34
@@ -944,6 +906,18 @@ function Render-TeikenFrame {
     $frameLines.Add((Format-TeikenText -State $State -Text 'Press V for verbose output • Press L to open logs • Press Q to cancel • Press ? for help' -Style 'Muted'))
     $frameLines.Add((Format-TeikenText -State $State -Text ('Main log: ' + $State.Artifacts.MainLogPath) -Style 'Dim'))
 
+    $lastFrameLineCount = 0
+    if ($State.Ui.PSObject.Properties.Name -contains 'LastFrameLineCount') {
+        $lastFrameLineCount = [int]$State.Ui.LastFrameLineCount
+    }
+    if ($lastFrameLineCount -gt $frameLines.Count) {
+        $fill = ' ' * [Math]::Max(1, $width)
+        for ($i = 0; $i -lt ($lastFrameLineCount - $frameLines.Count); $i++) {
+            $frameLines.Add($fill)
+        }
+    }
+    $State.Ui | Add-Member -NotePropertyName LastFrameLineCount -NotePropertyValue $frameLines.Count -Force
+
     $buffer = New-Object System.Text.StringBuilder
     [void]$buffer.Append("${script:CSI}H")
     foreach ($line in $frameLines) {
@@ -1009,20 +983,8 @@ function Start-TeikenUI {
         }
     }
 
-    for ($i = 0; $i -lt 8; $i++) {
-        if ($i -lt 2) {
-            $State.Ui.IntroPhase = 1
-        } elseif ($i -lt 4) {
-            $State.Ui.IntroPhase = 2
-        } elseif ($i -lt 6) {
-            $State.Ui.IntroPhase = 3
-        } else {
-            $State.Ui.IntroPhase = 4
-        }
-
-        Render-TeikenFrame -State $State
-        Start-Sleep -Milliseconds 120
-    }
+    $State.Ui.IntroPhase = 4
+    Render-TeikenFrame -State $State
 }
 
 function Stop-TeikenUI {
@@ -1462,51 +1424,37 @@ function Show-TeikenLaunchpad {
     }
 
     $State.Ui.Frozen = $true
-    for ($pulse = 0; $pulse -lt 6; $pulse++) {
-        $State.Ui.ReadyPulse = $pulse
-        Render-TeikenFrame -State $State
-        Start-Sleep -Milliseconds 120
+    $width = [Math]::Max(70, [Console]::WindowWidth)
+    $ready = Format-TeikenText -State $State -Text 'READY' -Style 'Success'
+
+    $launchLines = @(
+        "SETUP COMPLETE  [$ready]",
+        '',
+        "Config:    $($State.Paths.ConfigPath)",
+        "Logs:      $($State.Paths.InstallLogDir)",
+        "Boot:      $($State.Paths.BootReportsPath)",
+        "API URL:   $($State.Urls.Api)",
+        "Dash URL:  $($State.Urls.Dashboard)",
+        "Public:    $($State.Urls.Public)",
+        '',
+        'R: run dev server (scripts/run_dev.ps1)',
+        'D: run doctor',
+        'L: open logs folder',
+        'B: open boot reports folder',
+        'C: copy URLs to clipboard',
+        'Q: quit'
+    )
+
+    $panel = New-TeikenPanel -State $State -Title 'Launchpad' -Lines $launchLines -Width $width
+    $buffer = New-Object System.Text.StringBuilder
+    [void]$buffer.Append("${script:CSI}H${script:CSI}2J${script:CSI}H")
+    foreach ($line in $panel) {
+        [void]$buffer.Append($line)
+        [void]$buffer.Append("`n")
     }
+    [Console]::Write($buffer.ToString())
 
     while ($true) {
-        $width = [Math]::Max(70, [Console]::WindowWidth)
-        $readyStyle = if (($State.Ui.ReadyPulse % 2) -eq 0) { 'Success' } else { 'TealBright' }
-        $ready = Format-TeikenText -State $State -Text 'READY' -Style $readyStyle
-
-        $launchLines = @(
-            "SETUP COMPLETE  [$ready]",
-            '',
-            "Config:    $($State.Paths.ConfigPath)",
-            "Logs:      $($State.Paths.InstallLogDir)",
-            "Boot:      $($State.Paths.BootReportsPath)",
-            "API URL:   $($State.Urls.Api)",
-            "Dash URL:  $($State.Urls.Dashboard)",
-            "Public:    $($State.Urls.Public)",
-            '',
-            'R: run dev server (scripts/run_dev.ps1)',
-            'D: run doctor',
-            'L: open logs folder',
-            'B: open boot reports folder',
-            'C: copy URLs to clipboard',
-            'Q: quit'
-        )
-
-        $panel = New-TeikenPanel -State $State -Title 'Launchpad' -Lines $launchLines -Width $width
-        $buffer = New-Object System.Text.StringBuilder
-        [void]$buffer.Append("${script:CSI}H${script:CSI}2J${script:CSI}H")
-        foreach ($line in $panel) {
-            [void]$buffer.Append($line)
-            [void]$buffer.Append("`n")
-        }
-
-        [Console]::Write($buffer.ToString())
-
-        if (-not [Console]::KeyAvailable) {
-            Start-Sleep -Milliseconds 120
-            $State.Ui.ReadyPulse++
-            continue
-        }
-
         $key = [Console]::ReadKey($true)
         switch ($key.Key) {
             ([ConsoleKey]::R) { return 'run_dev' }
