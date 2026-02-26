@@ -45,6 +45,7 @@ agents_app = typer.Typer(help="Agent management")
 app.add_typer(models_app, name="models")
 app.add_typer(agents_app, name="agents")
 _CLI_DATA_DIR_OVERRIDE: Optional[str] = None
+_SHOW_ERROR_DETAILS: bool = False
 
 
 def _ctx_data(ctx: typer.Context) -> ControlPlaneContext:
@@ -59,6 +60,12 @@ def _ctx_data(ctx: typer.Context) -> ControlPlaneContext:
 
 def _run_async(coro):
     return asyncio.run(coro)
+
+
+def _print_error(exc: ControlPlaneError) -> None:
+    console.print(f"[red]{exc.user_message}[/red]")
+    if _SHOW_ERROR_DETAILS and exc.details:
+        console.print(f"[dim]details: {exc.details}[/dim]")
 
 
 @app.callback(invoke_without_command=True)
@@ -161,6 +168,7 @@ def models_pull(ctx: typer.Context, model_name: str) -> None:
     result = _run_async(
         cp.model_service.pull_model(model_name=model_name, progress_cb=lambda msg: console.print(f"  {msg}"))
     )
+    cp.audit_service.log("model.pull", target=model_name, details={"progress_events": len(result.get("progress", []))}, actor="cli")
     console.print(f"Pulled model: {result['model']}")
 
 
@@ -168,6 +176,7 @@ def models_pull(ctx: typer.Context, model_name: str) -> None:
 def models_select(ctx: typer.Context, model_name: str) -> None:
     cp = _ctx_data(ctx)
     cp.model_service.select_default_model(model_name)
+    cp.audit_service.log("model.select_default", target=model_name, details={}, actor="cli")
     console.print(f"Default model set: {model_name}")
 
 
@@ -186,6 +195,7 @@ def config_command(
     default_model: Optional[str] = typer.Option(None),
     host: Optional[str] = typer.Option(None),
     port: Optional[int] = typer.Option(None),
+    dangerous_tools: Optional[str] = typer.Option(None, "--dangerous-tools", help="Set dangerous tools: true|false"),
     data_dir: Optional[str] = typer.Option(None, help="Advanced: persist data dir in config"),
 ) -> None:
     cp = _ctx_data(ctx)
@@ -198,11 +208,17 @@ def config_command(
         patch["dev_server_host"] = host
     if port is not None:
         patch["dev_server_port"] = port
+    if dangerous_tools is not None:
+        normalized = dangerous_tools.strip().lower()
+        if normalized not in {"true", "false"}:
+            raise ValidationError("Invalid dangerous tools value", details={"expected": "true or false"})
+        patch["dangerous_tools_enabled"] = normalized == "true"
     if data_dir is not None:
         patch["data_dir"] = data_dir
 
     if patch:
         cfg = cp.config_service.save_patch(patch)
+        cp.audit_service.log("config.change", target="config", details={"patch_keys": sorted(patch.keys())}, actor="cli")
         if cp.config_service.requires_restart(patch.keys()):
             console.print("[yellow]Changes saved. Restart recommended.[/yellow]")
     else:
@@ -225,23 +241,39 @@ def hatch_command(
     description: Optional[str] = typer.Option(None),
     model: Optional[str] = typer.Option(None),
     runner: RunnerType = typer.Option(RunnerType.INPROCESS),
+    tool_profile: str = typer.Option("safe"),
+    allow_dangerous: bool = typer.Option(False, "--allow-dangerous"),
+    no_chat: bool = typer.Option(False, "--no-chat"),
 ) -> None:
     cp = _ctx_data(ctx)
     if not name:
         name = typer.prompt("Agent name")
     if description is None:
         description = typer.prompt("Description (optional)", default="")
+    if tool_profile.strip().lower() == "dangerous" and not cp.config_service.load().values.dangerous_tools_enabled:
+        raise ValidationError(
+            "dangerous tool profile is disabled by config.",
+            details={"hint": "Enable dangerous_tools_enabled in `teiken config` first."},
+        )
     agent = cp.agent_service.create_agent(
         name=name,
         description=description or None,
         model=model,
+        tool_profile=tool_profile,
         runner_type=runner,
+        allow_dangerous_override=allow_dangerous,
     )
     _run_async(cp.runtime_supervisor.start_agent(agent.id))
     session = cp.session_service.new_session(agent.id, title=f"{agent.name} session")
+    cp.audit_service.log(
+        "agent.hatch",
+        target=agent.id,
+        details={"name": agent.name, "runner_type": runner.value, "tool_profile": tool_profile},
+        actor="cli",
+    )
     console.print(f"Hatched agent: {agent.name} ({agent.id})")
     console.print(f"Session: {session.id}")
-    if typer.confirm("Enter chat now?", default=True):
+    if not no_chat and typer.confirm("Enter chat now?", default=True):
         _chat_loop(cp, agent.id, session.id)
 
 
@@ -269,6 +301,7 @@ def agents_list(ctx: typer.Context) -> None:
 def agents_start(ctx: typer.Context, agent_id: str) -> None:
     cp = _ctx_data(ctx)
     entry = _run_async(cp.runtime_supervisor.start_agent(agent_id))
+    cp.audit_service.log("agent.start", target=agent_id, details={"status": entry.status.value}, actor="cli")
     console.print(f"Started: {entry.agent_id} -> {entry.status.value}")
 
 
@@ -276,6 +309,7 @@ def agents_start(ctx: typer.Context, agent_id: str) -> None:
 def agents_stop(ctx: typer.Context, agent_id: str) -> None:
     cp = _ctx_data(ctx)
     entry = _run_async(cp.runtime_supervisor.stop_agent(agent_id))
+    cp.audit_service.log("agent.stop", target=agent_id, details={"status": entry.status.value}, actor="cli")
     console.print(f"Stopped: {entry.agent_id} -> {entry.status.value}")
 
 
@@ -283,6 +317,7 @@ def agents_stop(ctx: typer.Context, agent_id: str) -> None:
 def agents_restart(ctx: typer.Context, agent_id: str) -> None:
     cp = _ctx_data(ctx)
     entry = _run_async(cp.runtime_supervisor.restart_agent(agent_id))
+    cp.audit_service.log("agent.restart", target=agent_id, details={"status": entry.status.value}, actor="cli")
     console.print(f"Restarted: {entry.agent_id} -> {entry.status.value}")
 
 
@@ -290,6 +325,7 @@ def agents_restart(ctx: typer.Context, agent_id: str) -> None:
 def agents_default_set(ctx: typer.Context, agent_id: str) -> None:
     cp = _ctx_data(ctx)
     cp.agent_service.set_default_agent(agent_id)
+    cp.audit_service.log("agent.set_default", target=agent_id, details={}, actor="cli")
     console.print(f"Default agent set: {agent_id}")
 
 
@@ -299,6 +335,8 @@ def agents_delete(ctx: typer.Context, agent_id: str, yes: bool = typer.Option(Fa
     if not yes and not typer.confirm(f"Delete agent {agent_id}?", default=False):
         raise typer.Exit(code=1)
     deleted = cp.agent_service.delete_agent(agent_id)
+    if deleted:
+        cp.audit_service.log("agent.delete", target=agent_id, details={}, actor="cli")
     console.print("Deleted" if deleted else "Agent not found")
 
 
@@ -311,6 +349,7 @@ def agents_edit(
     model: Optional[str] = typer.Option(None),
     tool_profile: Optional[str] = typer.Option(None),
     max_queue_depth: Optional[int] = typer.Option(None),
+    allow_dangerous: bool = typer.Option(False, "--allow-dangerous"),
 ) -> None:
     cp = _ctx_data(ctx)
     patch = {}
@@ -324,9 +363,17 @@ def agents_edit(
         patch["tool_profile"] = tool_profile
     if max_queue_depth is not None:
         patch["max_queue_depth"] = max_queue_depth
-    if not patch:
+    has_user_patch = bool(patch)
+    patch["_allow_dangerous_override"] = allow_dangerous
+    if tool_profile and tool_profile.strip().lower() == "dangerous" and not cp.config_service.load().values.dangerous_tools_enabled:
+        raise ValidationError(
+            "dangerous tool profile is disabled by config.",
+            details={"hint": "Enable dangerous_tools_enabled in `teiken config` first."},
+        )
+    if not has_user_patch:
         raise typer.BadParameter("No updates provided")
     updated = cp.agent_service.update_agent(agent_id, patch)
+    cp.audit_service.log("agent.edit", target=agent_id, details={"patch_keys": sorted([k for k in patch.keys() if not k.startswith('_')])}, actor="cli")
     console.print(f"Updated {updated.name}")
 
 
@@ -385,7 +432,7 @@ def _chat_loop(cp: ControlPlaneContext, agent_id: str, session_id: str) -> None:
             response = _run_async(cp.runtime_supervisor.chat(agent_id=agent_id, session_id=session_id, message=text))
             console.print(f"assistant> {response}")
         except ControlPlaneError as exc:
-            console.print(f"[red]{exc.user_message}[/red]")
+            _print_error(exc)
         except Exception as exc:
             console.print(f"[red]Chat failed:[/red] {exc}")
 
@@ -397,8 +444,14 @@ def logs_command(
     component: Optional[str] = typer.Option(None, "--component"),
     limit: int = typer.Option(100, "--limit"),
     export: bool = typer.Option(False, "--export"),
+    audit: bool = typer.Option(False, "--audit"),
 ) -> None:
     cp = _ctx_data(ctx)
+    if audit:
+        events = cp.audit_service.list_recent(limit=limit)
+        for event in events:
+            console.print(f"{event['created_at']} {event['action']} target={event['target']} details={event['details']}")
+        return
     lines = cp.log_service.query(component=component, limit=limit)
     for line in lines:
         console.print(line)
@@ -433,6 +486,7 @@ def reset_command(ctx: typer.Context, yes: bool = typer.Option(False, "--yes")) 
     cp.runtime_supervisor.stop_dev_server()
     target = cp.paths.base_dir
     shutil.rmtree(target, ignore_errors=True)
+    cp.audit_service.log("system.reset", target=str(target), details={}, actor="cli")
     console.print(f"Reset complete: {target}")
 
 
@@ -440,6 +494,7 @@ def reset_command(ctx: typer.Context, yes: bool = typer.Option(False, "--yes")) 
 def upgrade_command(ctx: typer.Context) -> None:
     cp = _ctx_data(ctx)
     result = bootstrap_storage(cp.paths)
+    cp.audit_service.log("system.upgrade", target=str(cp.paths.base_dir), details={"result": result.message}, actor="cli")
     console.print(result.message)
 
 
@@ -456,27 +511,30 @@ def version_command(ctx: typer.Context) -> None:
 
 
 def main() -> None:
-    global _CLI_DATA_DIR_OVERRIDE
+    global _CLI_DATA_DIR_OVERRIDE, _SHOW_ERROR_DETAILS
     argv = sys.argv
     if "--data-dir" in argv:
         idx = argv.index("--data-dir")
         if idx + 1 >= len(argv):
             typer.echo("Missing value for --data-dir")
-            raise typer.Exit(code=2)
+            raise SystemExit(2)
         _CLI_DATA_DIR_OVERRIDE = argv[idx + 1]
         del argv[idx : idx + 2]
+    if "--details" in argv:
+        _SHOW_ERROR_DETAILS = True
+        argv.remove("--details")
 
     try:
         app()
     except ValidationError as exc:
-        console.print(f"[red]{exc.user_message}[/red]")
-        raise typer.Exit(code=2)
+        _print_error(exc)
+        raise SystemExit(2)
     except ControlPlaneError as exc:
-        console.print(f"[red]{exc.user_message}[/red]")
-        raise typer.Exit(code=1)
+        _print_error(exc)
+        raise SystemExit(1)
     except Exception as exc:
         console.print(f"[red]Command failed:[/red] {exc}")
-        raise typer.Exit(code=1)
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

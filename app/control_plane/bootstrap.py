@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from app.control_plane.infra.agent_repo import AgentRepository
+from app.control_plane.infra.audit_repo import ControlPlaneAuditRepository
 from app.control_plane.infra.config_store import ConfigStore
 from app.control_plane.infra.db_bootstrap import bootstrap_storage
 from app.control_plane.infra.lock import SingleInstanceLock
@@ -14,6 +15,7 @@ from app.control_plane.infra.paths import ControlPlanePaths, PathResolver
 from app.control_plane.infra.server_process import ServerProcessManager
 from app.control_plane.infra.session_repo import SessionRepository
 from app.control_plane.services.agent_service import AgentService
+from app.control_plane.services.audit_service import AuditService
 from app.control_plane.services.config_service import ConfigService
 from app.control_plane.services.doctor_service import DoctorService
 from app.control_plane.services.log_service import LogService
@@ -26,6 +28,7 @@ from app.control_plane.services.session_service import SessionService
 class ControlPlaneContext:
     paths: ControlPlanePaths
     lock: SingleInstanceLock
+    audit_service: AuditService
     config_service: ConfigService
     model_service: ModelService
     agent_service: AgentService
@@ -42,6 +45,8 @@ def build_context(cli_data_dir: Optional[str] = None) -> ControlPlaneContext:
     config_store = ConfigStore(paths.config_file)
     config_service = ConfigService(config_store)
     model_service = ModelService(config_service)
+    audit_repo = ControlPlaneAuditRepository(paths.control_plane_db)
+    audit_service = AuditService(audit_repo)
 
     agent_repo = AgentRepository(paths.control_plane_db)
     session_repo = SessionRepository(paths.control_plane_db)
@@ -61,6 +66,7 @@ def build_context(cli_data_dir: Optional[str] = None) -> ControlPlaneContext:
         agent_service=agent_service,
         session_service=session_service,
         server_process_manager=server_manager,
+        audit_service=audit_service,
     )
     log_service = LogService(logs_dir=paths.logs_dir)
     doctor_service = DoctorService(
@@ -73,6 +79,7 @@ def build_context(cli_data_dir: Optional[str] = None) -> ControlPlaneContext:
     return ControlPlaneContext(
         paths=paths,
         lock=lock,
+        audit_service=audit_service,
         config_service=config_service,
         model_service=model_service,
         agent_service=agent_service,
@@ -81,4 +88,3 @@ def build_context(cli_data_dir: Optional[str] = None) -> ControlPlaneContext:
         log_service=log_service,
         doctor_service=doctor_service,
     )
-

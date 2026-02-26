@@ -149,7 +149,8 @@ $RequiredImports = @(
     "app.db.session",
     "app.agent.ollama_client",
     "app.skills.loader",
-    "app.soul.loader"
+    "app.soul.loader",
+    "app.control_plane.entrypoint"
 )
 
 foreach ($Import in $RequiredImports) {
@@ -227,6 +228,30 @@ if (-not $SkipApi) {
         Write-Info "Start server with: .\scripts\run_dev.ps1"
         $Global:TestsWarning++
     }
+}
+
+# ==============================================================================
+# Test 10: Control Plane Commands
+# ==============================================================================
+Test-Category "Control Plane"
+
+$ControlPlaneDataDir = Join-Path $ProjectRoot ".smoke_teiken"
+$VersionCheck = & $PythonExe -m app.control_plane.entrypoint --data-dir $ControlPlaneDataDir version 2>&1
+if ($LASTEXITCODE -eq 0) {
+    Write-Success "Control plane: version command"
+    $Global:TestsPassed++
+} else {
+    Write-Fail "Control plane: version command failed"
+    $Global:TestsFailed++
+}
+
+$StatusCheck = & $PythonExe -m app.control_plane.entrypoint --data-dir $ControlPlaneDataDir status 2>&1
+if ($LASTEXITCODE -eq 0) {
+    Write-Success "Control plane: status command"
+    $Global:TestsPassed++
+} else {
+    Write-Fail "Control plane: status command failed"
+    $Global:TestsFailed++
 }
 
 # ==============================================================================

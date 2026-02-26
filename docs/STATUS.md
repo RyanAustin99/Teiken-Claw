@@ -98,8 +98,8 @@ Program outcome on 2026-02-25:
 - [x] Phase 9: Log query/follow/export diagnostics primitives
 - [x] Phase 10: Supervisor-managed dev-server process controls
 - [x] Phase 11: Setup script streamlining (`teiken` launch, optional no-start/no-ui)
-- [ ] Phase 12: Safety hardening and expanded audit coverage
-- [ ] Phase 13: Full E2E gate automation
+- [x] Phase 12: Safety hardening and expanded audit coverage
+- [x] Phase 13: Full E2E gate automation
 
 ### Validation Ledger (1.20 workstream)
 
@@ -108,3 +108,14 @@ Program outcome on 2026-02-25:
 | 2026-02-26 | `python -m pytest -q tests/control_plane` | PASS | `5 passed` |
 | 2026-02-26 | `python -m app.control_plane.entrypoint version --data-dir ./.tmp_teiken` | PASS | Native entrypoint and path override functional |
 | 2026-02-26 | `python -m app.control_plane.entrypoint --data-dir ./.tmp_teiken status` | PASS | Status executes without FastAPI dependency |
+| 2026-02-26 | `python -m pytest -q tests/control_plane tests/test_app.py` | PASS | Includes new audit, profile guard, and e2e programmatic flow tests |
+| 2026-02-26 | `powershell -ExecutionPolicy Bypass -File scripts/e2e_control_plane.ps1 -SkipOllamaDependent` | PASS (targeted) | Added scripted E2E gate path for CI and local validation |
+| 2026-02-26 | `python -m pytest -q` | PASS | `649 passed, 1 skipped` |
+| 2026-02-26 | `powershell -ExecutionPolicy Bypass -File scripts/smoke_test.ps1` | PASS | `Failed: 0` (one non-critical warning when API server is not running) |
+
+### Phase 12/13 Closure Notes
+
+1. Added local control-plane audit event persistence for state-changing actions (`config`, `models`, `hatch`, `agent lifecycle`, `upgrade`, `reset`).
+2. Enforced safe-by-default tool profiles and explicit guarded dangerous overrides.
+3. Added `--details` error mode for actionable failure introspection.
+4. Added CI workflow gate for control-plane tests and E2E smoke: `.github/workflows/control-plane-ci.yml`.

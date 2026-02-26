@@ -159,7 +159,6 @@ temp/
 *.temp
 
 # GitHub
-.github/workflows/
 .github/ISSUE_TEMPLATE/
 .github/PULL_REQUEST_TEMPLATE.md
 
@@ -235,7 +234,6 @@ temp/
 *.temp
 
 # GitHub
-.github/workflows/
 .github/ISSUE_TEMPLATE/
 .github/PULL_REQUEST_TEMPLATE.md
 

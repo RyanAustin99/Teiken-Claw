@@ -30,11 +30,13 @@ class AgentService:
         auto_restart: bool = True,
         max_queue_depth: Optional[int] = None,
         tool_profile_version: Optional[str] = None,
+        allow_dangerous_override: bool = False,
     ) -> AgentRecord:
         if not name.strip():
             raise ValidationError("Agent name is required")
         if self.repo.get_by_name(name):
             raise ValidationError(f"Agent name already exists: {name}")
+        self._validate_tool_profile(tool_profile, allow_dangerous_override=allow_dangerous_override)
         workspace = Path(workspace_path) if workspace_path else self.workspace_root / name
         workspace.mkdir(parents=True, exist_ok=True)
         return self.repo.create(
@@ -59,6 +61,11 @@ class AgentService:
         return self.repo.get_by_name(agent_id_or_name)
 
     def update_agent(self, agent_id: str, patch: Dict[str, object]) -> AgentRecord:
+        if "tool_profile" in patch:
+            self._validate_tool_profile(
+                str(patch["tool_profile"]),
+                allow_dangerous_override=bool(patch.pop("_allow_dangerous_override", False)),
+            )
         updated = self.repo.update(agent_id, patch)
         if not updated:
             raise ValidationError(f"Unknown agent: {agent_id}")
@@ -88,3 +95,14 @@ class AgentService:
             raise ValidationError(f"Unknown agent: {agent_id}")
         return updated
 
+    @staticmethod
+    def _validate_tool_profile(tool_profile: str, allow_dangerous_override: bool) -> None:
+        normalized = tool_profile.strip().lower()
+        allowed = {"safe", "balanced", "dangerous"}
+        if normalized not in allowed:
+            raise ValidationError(f"Unsupported tool profile: {tool_profile}")
+        if normalized == "dangerous" and not allow_dangerous_override:
+            raise ValidationError(
+                "Dangerous tool profile requires explicit override confirmation.",
+                details={"hint": "Pass --allow-dangerous and enable dangerous_tools_enabled in config."},
+            )

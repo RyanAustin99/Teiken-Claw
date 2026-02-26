@@ -48,7 +48,9 @@ Top-level command interface:
 - `teiken agents`
 - `teiken chat`
 - `teiken logs`
+- `teiken logs --audit`
 - `teiken open`
 - `teiken reset`
 - `teiken upgrade`
 - `teiken version`
+- `teiken --details <command>` for expanded error details

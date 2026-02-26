@@ -13,6 +13,7 @@ from app.control_plane.infra.runner_inprocess import InProcessRunner
 from app.control_plane.infra.runner_subprocess import SubprocessRunner
 from app.control_plane.infra.server_process import ServerProcessManager
 from app.control_plane.services.agent_service import AgentService
+from app.control_plane.services.audit_service import AuditService
 from app.control_plane.services.config_service import ConfigService
 from app.control_plane.services.model_service import ModelService
 from app.control_plane.services.session_service import SessionService
@@ -28,12 +29,14 @@ class RuntimeSupervisor:
         agent_service: AgentService,
         session_service: SessionService,
         server_process_manager: ServerProcessManager,
+        audit_service: Optional[AuditService] = None,
     ) -> None:
         self.config_service = config_service
         self.model_service = model_service
         self.agent_service = agent_service
         self.session_service = session_service
         self.server_process_manager = server_process_manager
+        self.audit_service = audit_service
         cfg = self.config_service.load().values
         self._semaphore = asyncio.Semaphore(max(1, cfg.max_inflight_ollama_requests))
         self._inflight = 0
@@ -45,14 +48,20 @@ class RuntimeSupervisor:
         self.server_process_manager.host = cfg.dev_server_host
         self.server_process_manager.port = cfg.dev_server_port
         self.server_process_manager.start(attach_if_running=True)
+        if self.audit_service:
+            self.audit_service.log("dev_server.start", target="dev_server", details={}, actor="supervisor")
         return self.snapshot()
 
     def stop_dev_server(self) -> SupervisorSnapshot:
         self.server_process_manager.stop()
+        if self.audit_service:
+            self.audit_service.log("dev_server.stop", target="dev_server", details={}, actor="supervisor")
         return self.snapshot()
 
     def restart_dev_server(self) -> SupervisorSnapshot:
         self.server_process_manager.restart()
+        if self.audit_service:
+            self.audit_service.log("dev_server.restart", target="dev_server", details={}, actor="supervisor")
         return self.snapshot()
 
     async def start_agent(self, agent_id: str) -> RuntimeEntry:
@@ -82,6 +91,8 @@ class RuntimeSupervisor:
         await runner.start()
         self._runners[agent.id] = runner
         self.agent_service.set_status(agent.id, RuntimeStatus.RUNNING)
+        if self.audit_service:
+            self.audit_service.log("agent.start", target=agent.id, details={"runner": runner_type.value}, actor="supervisor")
         return self._entry_from_runner(agent.id, runner)
 
     async def stop_agent(self, agent_id: str) -> RuntimeEntry:
@@ -92,11 +103,16 @@ class RuntimeSupervisor:
         await runner.stop()
         del self._runners[agent_id]
         self.agent_service.set_status(agent_id, RuntimeStatus.STOPPED)
+        if self.audit_service:
+            self.audit_service.log("agent.stop", target=agent_id, details={}, actor="supervisor")
         return self._entry_from_runner(agent_id, runner)
 
     async def restart_agent(self, agent_id: str) -> RuntimeEntry:
         await self.stop_agent(agent_id)
-        return await self.start_agent(agent_id)
+        entry = await self.start_agent(agent_id)
+        if self.audit_service:
+            self.audit_service.log("agent.restart", target=agent_id, details={}, actor="supervisor")
+        return entry
 
     async def restart_all(self) -> SupervisorSnapshot:
         for agent_id in list(self._runners.keys()):
@@ -156,4 +172,3 @@ class RuntimeSupervisor:
             last_error=status.last_error or self._last_errors.get(agent_id),
             last_heartbeat_at=status.last_heartbeat_at,
         )
-

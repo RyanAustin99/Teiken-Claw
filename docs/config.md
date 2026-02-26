@@ -37,11 +37,18 @@ Use `teiken config` or TUI Config screen to set:
 - Safety toggles
 - Data directory (advanced)
 
+Example:
+
+```powershell
+teiken config --default-model llama3.2 --dangerous-tools false
+```
+
 If a config change requires restart, the control plane prompts for restart.
 
 ## Secrets
 
 Secrets remain env-driven. Local config file is non-secret and redacted in diagnostic exports.
+Dangerous tool profiles are gated and require explicit override confirmation.
 
 ## Config Versioning
 

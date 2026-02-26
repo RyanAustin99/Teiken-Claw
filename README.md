@@ -20,6 +20,7 @@ Main command surface:
 - `teiken agents`
 - `teiken chat`
 - `teiken logs`
+- `teiken logs --audit`
 - `teiken open`
 - `teiken reset`
 - `teiken upgrade`
@@ -27,6 +28,7 @@ Main command surface:
 
 All commands support `--data-dir`. Base path precedence:
 `--data-dir` > `TEIKEN_HOME` > `%LOCALAPPDATA%\TeikenClaw`.
+Use `--details` on any command to print structured error details.
 
 ## Storage Semantics
 
@@ -40,6 +42,10 @@ All control-plane paths derive from a base directory:
 
 Single-instance lock file:
 `<base>/run/control_plane.lock`
+
+Safe defaults:
+- new agents default to `tool_profile=safe`
+- dangerous profile changes require explicit override confirmation
 
 ## Quick Start (Windows)
 
