@@ -87,6 +87,7 @@ function Get-TeikenAnsiSupport {
 
     try {
         if ([Console]::IsOutputRedirected) { return $false }
+        if ([Console]::IsInputRedirected) { return $false }
     } catch {
         return $false
     }
@@ -296,7 +297,7 @@ function Get-TeikenInstallerContext {
 
     $interactive = $true
     try {
-        $interactive = -not [Console]::IsOutputRedirected
+        $interactive = (-not [Console]::IsOutputRedirected) -and (-not [Console]::IsInputRedirected)
     } catch {
         $interactive = $false
     }
@@ -1423,6 +1424,11 @@ function Show-TeikenLaunchpad {
         return 'quit'
     }
 
+    if (-not $State.TerminalCaps.Interactive) {
+        Write-TeikenMainLog -State $State -Message 'Launchpad skipped: non-interactive terminal'
+        return 'quit'
+    }
+
     $State.Ui.Frozen = $true
     $width = [Math]::Max(70, [Console]::WindowWidth)
     $ready = Format-TeikenText -State $State -Text 'READY' -Style 'Success'
@@ -1455,7 +1461,23 @@ function Show-TeikenLaunchpad {
     [Console]::Write($buffer.ToString())
 
     while ($true) {
-        $key = [Console]::ReadKey($true)
+        try {
+            if (-not [Console]::KeyAvailable) {
+                Start-Sleep -Milliseconds 120
+                continue
+            }
+        } catch {
+            Write-TeikenMainLog -State $State -Message ("Launchpad key probe failed: {0}" -f $_.Exception.Message)
+            return 'quit'
+        }
+
+        try {
+            $key = [Console]::ReadKey($true)
+        } catch {
+            Write-TeikenMainLog -State $State -Message ("Launchpad read key failed: {0}" -f $_.Exception.Message)
+            return 'quit'
+        }
+
         switch ($key.Key) {
             ([ConsoleKey]::R) { return 'run_dev' }
             ([ConsoleKey]::D) { return 'doctor' }
