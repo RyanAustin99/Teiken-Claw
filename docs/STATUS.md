@@ -1,8 +1,8 @@
 # Project Status
 
-## Current Version: 1.0.0
-## Last Updated: 2026-02-25
-## Current Track: Recovery Program (Runnability First)
+## Current Version: 1.20.0
+## Last Updated: 2026-02-26
+## Current Track: Terminal-First Control Plane
 
 ---
 
@@ -70,3 +70,41 @@ Program outcome on 2026-02-25:
 1. Test run is green but still produces deprecation/resource warnings (notably `datetime.utcnow()` and some coroutine-not-awaited warnings in non-failing paths); tracked as follow-up hardening work.
 2. `python -m app.main` is an intentionally long-running server entrypoint; validation uses boot-path confirmation rather than process exit.
 3. Milestone PR checkpoints were prepared through commit boundaries; opening remote PRs requires repository hosting interaction outside this local execution.
+
+---
+
+## 1.20.0 Program (Terminal-First Control Plane)
+
+### Decisions Locked
+
+1. TUI stack: `Textual + Rich`
+2. Runtime model: hybrid runner (`inprocess` default, `subprocess` feature-flagged)
+3. Base path default: `%LOCALAPPDATA%\\TeikenClaw`
+4. Path precedence: `--data-dir` > `TEIKEN_HOME` > default
+5. Control plane functions without FastAPI availability
+
+### Phase Checklist
+
+- [x] Phase 0: Product realignment docs
+- [x] Phase 1: Native `teiken` command + TUI/CLI skeleton
+- [x] Phase 1.5: Storage/DB bootstrap under control-plane base path
+- [x] Phase 2: Layered config store with schema version and validation
+- [x] Phase 3: Internal-service doctor/status path
+- [x] Phase 4: Model detect/list/pull/select/validate services
+- [x] Phase 5: Persistent agent registry with runtime policy fields
+- [x] Phase 6: Hatch flow (create/config/start + chat entry)
+- [x] Phase 7: Terminal chat session persistence
+- [x] Phase 8: Runtime supervisor with runner abstraction and backpressure controls
+- [x] Phase 9: Log query/follow/export diagnostics primitives
+- [x] Phase 10: Supervisor-managed dev-server process controls
+- [x] Phase 11: Setup script streamlining (`teiken` launch, optional no-start/no-ui)
+- [ ] Phase 12: Safety hardening and expanded audit coverage
+- [ ] Phase 13: Full E2E gate automation
+
+### Validation Ledger (1.20 workstream)
+
+| Date | Command | Result | Notes |
+|------|---------|--------|-------|
+| 2026-02-26 | `python -m pytest -q tests/control_plane` | PASS | `5 passed` |
+| 2026-02-26 | `python -m app.control_plane.entrypoint version --data-dir ./.tmp_teiken` | PASS | Native entrypoint and path override functional |
+| 2026-02-26 | `python -m app.control_plane.entrypoint --data-dir ./.tmp_teiken status` | PASS | Status executes without FastAPI dependency |
