@@ -198,6 +198,9 @@ __pycache__/
 # Lock files
 *.lock
 
+# Teiken Claw runtime state
+data/control_state.json
+
 # Node.js
 node_modules/
 npm-debug.log
