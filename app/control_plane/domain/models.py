@@ -29,6 +29,12 @@ class QueueFullPolicy(str, Enum):
     DROP = "drop"
 
 
+class OnboardingStatus(str, Enum):
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    COMPLETE = "complete"
+
+
 class AppConfig(BaseModel):
     """Persisted control-plane user config (small, non-secret)."""
 
@@ -46,6 +52,14 @@ class AppConfig(BaseModel):
     max_agent_queue_depth: int = 100
     queue_full_policy: QueueFullPolicy = QueueFullPolicy.DENY
     subprocess_runner_enabled: bool = False
+    agent_prompt_template_version: str = "1.0.0"
+
+
+class AgentOnboardingState(BaseModel):
+    user_name: Optional[str] = None
+    preferred_agent_name: Optional[str] = None
+    purpose: Optional[str] = None
+    complete: bool = False
 
 
 class EffectiveConfig(BaseModel):
@@ -74,6 +88,12 @@ class AgentRecord(BaseModel):
     auto_restart: bool = True
     max_queue_depth: Optional[int] = None
     tool_profile_version: Optional[str] = None
+    agent_profile_user_name: Optional[str] = None
+    agent_profile_agent_name: Optional[str] = None
+    agent_profile_purpose: Optional[str] = None
+    onboarding_complete: bool = False
+    onboarding_updated_at: Optional[datetime] = None
+    prompt_template_version: str = "1.0.0"
 
 
 class SessionRecord(BaseModel):
@@ -82,6 +102,8 @@ class SessionRecord(BaseModel):
     created_at: datetime
     updated_at: datetime
     title: Optional[str] = None
+    onboarding_status: OnboardingStatus = OnboardingStatus.PENDING
+    onboarding_step: int = 0
 
 
 class SessionMessageRecord(BaseModel):

@@ -19,13 +19,13 @@ class InProcessRunner(AgentRunner):
         agent_id: str,
         max_queue_depth: int,
         semaphore: asyncio.Semaphore,
-        chat_fn: Callable[[str], Awaitable[str]],
+        chat_fn: Callable[[str, Optional[str]], Awaitable[str]],
     ) -> None:
         self.agent_id = agent_id
         self.max_queue_depth = max_queue_depth
         self._semaphore = semaphore
         self._chat_fn = chat_fn
-        self._queue: asyncio.Queue[Tuple[str, asyncio.Future[str]]] = asyncio.Queue(maxsize=max_queue_depth)
+        self._queue: asyncio.Queue[Tuple[str, Optional[str], asyncio.Future[str]]] = asyncio.Queue(maxsize=max_queue_depth)
         self._worker_task: Optional[asyncio.Task[None]] = None
         self._heartbeat_task: Optional[asyncio.Task[None]] = None
         self._status = RuntimeStatus.STOPPED
@@ -50,7 +50,7 @@ class InProcessRunner(AgentRunner):
             await asyncio.gather(*tasks, return_exceptions=True)
         self._status = RuntimeStatus.STOPPED
 
-    async def send_message(self, message: str) -> str:
+    async def send_message(self, message: str, *, session_id: Optional[str] = None) -> str:
         if self._status != RuntimeStatus.RUNNING:
             raise RuntimeError(f"Agent {self.agent_id} is not running")
         if self._queue.full():
@@ -59,7 +59,7 @@ class InProcessRunner(AgentRunner):
 
         loop = asyncio.get_running_loop()
         future: asyncio.Future[str] = loop.create_future()
-        self._queue.put_nowait((message, future))
+        self._queue.put_nowait((message, session_id, future))
         return await future
 
     def status(self) -> RunnerStatus:
@@ -79,10 +79,10 @@ class InProcessRunner(AgentRunner):
 
     async def _worker_loop(self) -> None:
         while True:
-            message, future = await self._queue.get()
+            message, session_id, future = await self._queue.get()
             try:
                 async with self._semaphore:
-                    response = await self._chat_fn(message)
+                    response = await self._chat_fn(message, session_id)
                 if not future.done():
                     future.set_result(response)
             except Exception as exc:  # pragma: no cover - runtime guard

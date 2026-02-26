@@ -33,7 +33,7 @@ class AgentRunner(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def send_message(self, message: str) -> str:
+    async def send_message(self, message: str, *, session_id: Optional[str] = None) -> str:
         raise NotImplementedError
 
     @abstractmethod

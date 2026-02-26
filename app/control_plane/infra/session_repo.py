@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import List, Optional
 from uuid import uuid4
 
-from app.control_plane.domain.models import SessionMessageRecord, SessionRecord
+from app.control_plane.domain.models import OnboardingStatus, SessionMessageRecord, SessionRecord
 
 
 def _utcnow() -> str:
@@ -37,6 +37,8 @@ class SessionRepository:
                     id TEXT PRIMARY KEY,
                     agent_id TEXT NOT NULL,
                     title TEXT,
+                    onboarding_status TEXT NOT NULL DEFAULT 'pending',
+                    onboarding_step INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
@@ -56,7 +58,20 @@ class SessionRepository:
                 )
                 """
             )
+            self._ensure_columns(conn)
             conn.commit()
+
+    @staticmethod
+    def _ensure_columns(conn: sqlite3.Connection) -> None:
+        existing = {row["name"] for row in conn.execute("PRAGMA table_info(agent_sessions)").fetchall()}
+        required = {
+            "onboarding_status": "TEXT NOT NULL DEFAULT 'pending'",
+            "onboarding_step": "INTEGER NOT NULL DEFAULT 0",
+        }
+        for column, definition in required.items():
+            if column in existing:
+                continue
+            conn.execute(f"ALTER TABLE agent_sessions ADD COLUMN {column} {definition}")
 
     @staticmethod
     def _row_to_session(row: sqlite3.Row) -> SessionRecord:
@@ -66,6 +81,8 @@ class SessionRepository:
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
             title=row["title"],
+            onboarding_status=OnboardingStatus(row["onboarding_status"]),
+            onboarding_step=int(row["onboarding_step"] or 0),
         )
 
     @staticmethod
@@ -86,11 +103,30 @@ class SessionRepository:
         now = _utcnow()
         with closing(self._connect()) as conn:
             conn.execute(
-                "INSERT INTO agent_sessions (id, agent_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-                (session_id, agent_id, title, now, now),
+                """
+                INSERT INTO agent_sessions (
+                    id, agent_id, title, onboarding_status, onboarding_step, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session_id,
+                    agent_id,
+                    title,
+                    OnboardingStatus.PENDING.value,
+                    0,
+                    now,
+                    now,
+                ),
             )
             conn.commit()
             row = conn.execute("SELECT * FROM agent_sessions WHERE id = ?", (session_id,)).fetchone()
+        return self._row_to_session(row)
+
+    def get_session(self, session_id: str) -> Optional[SessionRecord]:
+        with closing(self._connect()) as conn:
+            row = conn.execute("SELECT * FROM agent_sessions WHERE id = ?", (session_id,)).fetchone()
+        if not row:
+            return None
         return self._row_to_session(row)
 
     def list_sessions(self, agent_id: str, limit: int = 50) -> List[SessionRecord]:
@@ -107,6 +143,23 @@ class SessionRepository:
             conn.execute(
                 "UPDATE agent_sessions SET title = ?, updated_at = ? WHERE id = ?",
                 (title, now, session_id),
+            )
+            conn.commit()
+            row = conn.execute("SELECT * FROM agent_sessions WHERE id = ?", (session_id,)).fetchone()
+        if not row:
+            return None
+        return self._row_to_session(row)
+
+    def update_onboarding(self, session_id: str, status: OnboardingStatus, step: int) -> Optional[SessionRecord]:
+        now = _utcnow()
+        with closing(self._connect()) as conn:
+            conn.execute(
+                """
+                UPDATE agent_sessions
+                SET onboarding_status = ?, onboarding_step = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (status.value, step, now, session_id),
             )
             conn.commit()
             row = conn.execute("SELECT * FROM agent_sessions WHERE id = ?", (session_id,)).fetchone()

@@ -15,6 +15,8 @@ from app.control_plane.infra.paths import ControlPlanePaths, PathResolver
 from app.control_plane.infra.server_process import ServerProcessManager
 from app.control_plane.infra.session_repo import SessionRepository
 from app.control_plane.services.agent_service import AgentService
+from app.control_plane.services.agent_conversation_service import AgentConversationService
+from app.control_plane.services.agent_prompt_template_service import AgentPromptTemplateService
 from app.control_plane.services.audit_service import AuditService
 from app.control_plane.services.config_service import ConfigService
 from app.control_plane.services.doctor_service import DoctorService
@@ -33,6 +35,7 @@ class ControlPlaneContext:
     model_service: ModelService
     agent_service: AgentService
     session_service: SessionService
+    conversation_service: AgentConversationService
     runtime_supervisor: RuntimeSupervisor
     log_service: LogService
     doctor_service: DoctorService
@@ -55,6 +58,16 @@ def build_context(cli_data_dir: Optional[str] = None) -> ControlPlaneContext:
         workspace_root = (paths.base_dir / workspace_root).resolve()
     agent_service = AgentService(repo=agent_repo, workspace_root=workspace_root)
     session_service = SessionService(repo=session_repo)
+    prompt_template_service = AgentPromptTemplateService(
+        template_path=Path(__file__).resolve().parent / "prompts" / "hatched_agent_system_prompt.md"
+    )
+    conversation_service = AgentConversationService(
+        config_service=config_service,
+        model_service=model_service,
+        agent_service=agent_service,
+        session_service=session_service,
+        prompt_template_service=prompt_template_service,
+    )
     server_manager = ServerProcessManager(
         pid_file=paths.server_pid_file,
         host=config_service.load().values.dev_server_host,
@@ -63,6 +76,7 @@ def build_context(cli_data_dir: Optional[str] = None) -> ControlPlaneContext:
     runtime_supervisor = RuntimeSupervisor(
         config_service=config_service,
         model_service=model_service,
+        conversation_service=conversation_service,
         agent_service=agent_service,
         session_service=session_service,
         server_process_manager=server_manager,
@@ -84,6 +98,7 @@ def build_context(cli_data_dir: Optional[str] = None) -> ControlPlaneContext:
         model_service=model_service,
         agent_service=agent_service,
         session_service=session_service,
+        conversation_service=conversation_service,
         runtime_supervisor=runtime_supervisor,
         log_service=log_service,
         doctor_service=doctor_service,

@@ -6,7 +6,7 @@ import sqlite3
 from contextlib import closing
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, List, Optional
 from uuid import uuid4
 
 from app.control_plane.domain.models import AgentRecord, RunnerType, RuntimeStatus
@@ -49,11 +49,34 @@ class AgentRepository:
                     runner_type TEXT,
                     auto_restart INTEGER NOT NULL DEFAULT 1,
                     max_queue_depth INTEGER,
-                    tool_profile_version TEXT
+                    tool_profile_version TEXT,
+                    agent_profile_user_name TEXT,
+                    agent_profile_agent_name TEXT,
+                    agent_profile_purpose TEXT,
+                    onboarding_complete INTEGER NOT NULL DEFAULT 0,
+                    onboarding_updated_at TEXT,
+                    prompt_template_version TEXT NOT NULL DEFAULT '1.0.0'
                 )
                 """
             )
+            self._ensure_columns(conn)
             conn.commit()
+
+    @staticmethod
+    def _ensure_columns(conn: sqlite3.Connection) -> None:
+        existing = {row["name"] for row in conn.execute("PRAGMA table_info(agents)").fetchall()}
+        required: Dict[str, str] = {
+            "agent_profile_user_name": "TEXT",
+            "agent_profile_agent_name": "TEXT",
+            "agent_profile_purpose": "TEXT",
+            "onboarding_complete": "INTEGER NOT NULL DEFAULT 0",
+            "onboarding_updated_at": "TEXT",
+            "prompt_template_version": "TEXT NOT NULL DEFAULT '1.0.0'",
+        }
+        for column, definition in required.items():
+            if column in existing:
+                continue
+            conn.execute(f"ALTER TABLE agents ADD COLUMN {column} {definition}")
 
     @staticmethod
     def _row_to_agent(row: sqlite3.Row) -> AgentRecord:
@@ -74,6 +97,14 @@ class AgentRepository:
             auto_restart=bool(row["auto_restart"]),
             max_queue_depth=row["max_queue_depth"],
             tool_profile_version=row["tool_profile_version"],
+            agent_profile_user_name=row["agent_profile_user_name"],
+            agent_profile_agent_name=row["agent_profile_agent_name"],
+            agent_profile_purpose=row["agent_profile_purpose"],
+            onboarding_complete=bool(row["onboarding_complete"]),
+            onboarding_updated_at=datetime.fromisoformat(row["onboarding_updated_at"])
+            if row["onboarding_updated_at"]
+            else None,
+            prompt_template_version=row["prompt_template_version"] or "1.0.0",
         )
 
     def create(
@@ -87,6 +118,7 @@ class AgentRepository:
         auto_restart: bool = True,
         max_queue_depth: Optional[int] = None,
         tool_profile_version: Optional[str] = None,
+        prompt_template_version: str = "1.0.0",
     ) -> AgentRecord:
         agent_id = str(uuid4())
         now = _utcnow()
@@ -96,8 +128,10 @@ class AgentRepository:
                 INSERT INTO agents (
                     id, name, description, model, tool_profile, workspace_path,
                     created_at, updated_at, status, last_error, last_seen_at,
-                    is_default, runner_type, auto_restart, max_queue_depth, tool_profile_version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    is_default, runner_type, auto_restart, max_queue_depth, tool_profile_version,
+                    agent_profile_user_name, agent_profile_agent_name, agent_profile_purpose,
+                    onboarding_complete, onboarding_updated_at, prompt_template_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     agent_id,
@@ -116,6 +150,12 @@ class AgentRepository:
                     1 if auto_restart else 0,
                     max_queue_depth,
                     tool_profile_version,
+                    None,
+                    None,
+                    None,
+                    0,
+                    None,
+                    prompt_template_version,
                 ),
             )
             conn.commit()
@@ -158,6 +198,12 @@ class AgentRepository:
             "auto_restart",
             "max_queue_depth",
             "tool_profile_version",
+            "agent_profile_user_name",
+            "agent_profile_agent_name",
+            "agent_profile_purpose",
+            "onboarding_complete",
+            "onboarding_updated_at",
+            "prompt_template_version",
         }
         keys = [key for key in patch.keys() if key in allowed]
         if not keys:

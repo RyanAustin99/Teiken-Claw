@@ -109,10 +109,18 @@ class ModelService:
         }
 
     async def chat(self, message: str, model: Optional[str] = None) -> str:
+        return await self.chat_messages(messages=[{"role": "user", "content": message}], model=model)
+
+    async def chat_messages(
+        self,
+        messages: List[Dict[str, str]],
+        model: Optional[str] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> str:
         client = self._client()
         response = await client.chat(
-            messages=[{"role": "user", "content": message}],
+            messages=messages,
             model=model,
-            tools=None,
+            tools=tools,
         )
         return response.message.content

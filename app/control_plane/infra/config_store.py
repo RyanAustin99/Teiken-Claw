@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 
-CURRENT_CONFIG_VERSION = 1
+CURRENT_CONFIG_VERSION = 2
 
 
 class ConfigStore:
@@ -49,5 +49,8 @@ class ConfigStore:
             migrated["config_version"] = 1
         if "configured" not in migrated:
             migrated["configured"] = False
+        if version < 2 and "agent_prompt_template_version" not in migrated:
+            migrated["agent_prompt_template_version"] = "1.0.0"
+            migrated["config_version"] = 2
         return migrated
 

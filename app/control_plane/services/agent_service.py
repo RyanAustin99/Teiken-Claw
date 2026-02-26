@@ -30,6 +30,7 @@ class AgentService:
         auto_restart: bool = True,
         max_queue_depth: Optional[int] = None,
         tool_profile_version: Optional[str] = None,
+        prompt_template_version: str = "1.0.0",
         allow_dangerous_override: bool = False,
     ) -> AgentRecord:
         if not name.strip():
@@ -49,6 +50,7 @@ class AgentService:
             auto_restart=auto_restart,
             max_queue_depth=max_queue_depth,
             tool_profile_version=tool_profile_version,
+            prompt_template_version=prompt_template_version,
         )
 
     def list_agents(self) -> List[AgentRecord]:
@@ -66,6 +68,30 @@ class AgentService:
                 str(patch["tool_profile"]),
                 allow_dangerous_override=bool(patch.pop("_allow_dangerous_override", False)),
             )
+        updated = self.repo.update(agent_id, patch)
+        if not updated:
+            raise ValidationError(f"Unknown agent: {agent_id}")
+        return updated
+
+    def update_onboarding_profile(
+        self,
+        agent_id: str,
+        *,
+        user_name: Optional[str] = None,
+        preferred_agent_name: Optional[str] = None,
+        purpose: Optional[str] = None,
+        complete: Optional[bool] = None,
+    ) -> AgentRecord:
+        patch: Dict[str, object] = {}
+        if user_name is not None:
+            patch["agent_profile_user_name"] = user_name
+        if preferred_agent_name is not None:
+            patch["agent_profile_agent_name"] = preferred_agent_name
+        if purpose is not None:
+            patch["agent_profile_purpose"] = purpose
+        if complete is not None:
+            patch["onboarding_complete"] = complete
+            patch["onboarding_updated_at"] = datetime.utcnow().isoformat()
         updated = self.repo.update(agent_id, patch)
         if not updated:
             raise ValidationError(f"Unknown agent: {agent_id}")

@@ -67,8 +67,11 @@ class SubprocessRunner(AgentRunner):
             self._proc = None
             self._status = RuntimeStatus.STOPPED
 
-    async def send_message(self, message: str) -> str:
-        response = await self._send_command({"action": "send_message", "message": message}, wait_response=True)
+    async def send_message(self, message: str, *, session_id: Optional[str] = None) -> str:
+        response = await self._send_command(
+            {"action": "send_message", "message": message, "session_id": session_id},
+            wait_response=True,
+        )
         return str(response.get("content", ""))
 
     def status(self) -> RunnerStatus:

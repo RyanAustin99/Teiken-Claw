@@ -13,6 +13,7 @@ from app.control_plane.infra.runner_inprocess import InProcessRunner
 from app.control_plane.infra.runner_subprocess import SubprocessRunner
 from app.control_plane.infra.server_process import ServerProcessManager
 from app.control_plane.services.agent_service import AgentService
+from app.control_plane.services.agent_conversation_service import AgentConversationService
 from app.control_plane.services.audit_service import AuditService
 from app.control_plane.services.config_service import ConfigService
 from app.control_plane.services.model_service import ModelService
@@ -26,6 +27,7 @@ class RuntimeSupervisor:
         self,
         config_service: ConfigService,
         model_service: ModelService,
+        conversation_service: AgentConversationService,
         agent_service: AgentService,
         session_service: SessionService,
         server_process_manager: ServerProcessManager,
@@ -33,6 +35,7 @@ class RuntimeSupervisor:
     ) -> None:
         self.config_service = config_service
         self.model_service = model_service
+        self.conversation_service = conversation_service
         self.agent_service = agent_service
         self.session_service = session_service
         self.server_process_manager = server_process_manager
@@ -85,7 +88,7 @@ class RuntimeSupervisor:
                 agent_id=agent.id,
                 max_queue_depth=queue_depth,
                 semaphore=self._semaphore,
-                chat_fn=lambda msg, aid=agent.id: self._chat_with_limits(aid, msg),
+                chat_fn=lambda msg, sid, aid=agent.id: self._chat_with_limits(aid, msg, sid),
             )
 
         await runner.start()
@@ -126,7 +129,7 @@ class RuntimeSupervisor:
             await self.start_agent(agent_id)
             runner = self._runners[agent_id]
         self.session_service.append_user_message(session_id, message)
-        response = await runner.send_message(message)
+        response = await runner.send_message(message, session_id=session_id)
         self.session_service.append_assistant_message(session_id, response)
         return response
 
@@ -151,12 +154,20 @@ class RuntimeSupervisor:
             await self.stop_agent(agent_id)
         self.stop_dev_server()
 
-    async def _chat_with_limits(self, agent_id: str, message: str) -> str:
+    async def _chat_with_limits(self, agent_id: str, message: str, session_id: Optional[str]) -> str:
         agent = self.agent_service.get_agent(agent_id)
-        model_override = agent.model if agent else None
         self._inflight += 1
         try:
-            response = await self.model_service.chat(message=message, model=model_override)
+            if not session_id:
+                raise ValidationError(
+                    "Session ID required for agent-contextual chat.",
+                    details={"agent_id": agent_id},
+                )
+            response = await self.conversation_service.generate_response(
+                agent_id=agent_id,
+                session_id=session_id,
+                user_message=message,
+            )
             self.agent_service.set_status(agent_id, RuntimeStatus.RUNNING)
             return response
         except Exception as exc:
