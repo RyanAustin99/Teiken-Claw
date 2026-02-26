@@ -6,6 +6,7 @@ from typing import List, Optional
 
 from app.control_plane.domain.models import OnboardingStatus, SessionMessageRecord, SessionRecord
 from app.control_plane.infra.session_repo import SessionRepository
+from app.tools.protocol import ToolResultEnvelope, extract_tool_results
 
 
 class SessionService:
@@ -57,4 +58,24 @@ class SessionService:
 
     def get_transcript(self, session_id: str) -> List[SessionMessageRecord]:
         return self.repo.list_messages(session_id=session_id)
+
+    def get_tool_receipts(self, session_id: str, limit: int = 20) -> List[ToolResultEnvelope]:
+        receipts: List[ToolResultEnvelope] = []
+        for message in self.repo.list_tool_messages(session_id=session_id, limit=limit):
+            parsed = extract_tool_results(message.content)
+            if parsed:
+                receipts.extend(parsed)
+                continue
+            if message.tool_name:
+                receipts.append(
+                    ToolResultEnvelope(
+                        id=f"msg-{message.id}",
+                        tool=message.tool_name,
+                        ok=bool(message.tool_ok),
+                        result={"content": message.content} if message.tool_ok else None,
+                        error={"type": "unknown", "message": message.content} if message.tool_ok is False else None,
+                        elapsed_ms=message.tool_elapsed_ms or 0,
+                    )
+                )
+        return receipts
 

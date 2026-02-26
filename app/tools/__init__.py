@@ -44,6 +44,18 @@ from app.tools.validators import (
     coerce_value,
     safe_defaults,
 )
+from app.tools.protocol import (
+    ToolCall,
+    ToolResultEnvelope,
+    ParsedToolCalls,
+    extract_tool_calls,
+    extract_tool_results,
+    render_tool_result,
+)
+from app.tools.executor import (
+    ToolExecutionContext,
+    ToolExecutor,
+)
 
 # Mock tools
 from app.tools.mock_tools import (
@@ -57,7 +69,13 @@ from app.tools.mock_tools import (
 
 # Production tools (Phase 8)
 from app.tools.web_tool import WebTool
-from app.tools.files_tool import FilesTool
+from app.tools.files_tool import (
+    FilesTool,
+    FilesExistsSubtool,
+    FilesListSubtool,
+    FilesReadSubtool,
+    FilesWriteSubtool,
+)
 from app.tools.exec_tool import ExecTool, ExecutionMode
 from app.tools.memory_tool import MemoryTool
 from app.tools.scheduler_tool import SchedulerTool, JobStatus, TriggerType
@@ -100,6 +118,10 @@ def register_production_tools(registry: ToolRegistry) -> None:
         workspace_dir=getattr(settings, 'WORKSPACE_DIR', './data/workspace'),
         max_file_size=getattr(settings, 'FILES_MAX_SIZE', 10_000_000),
     ))
+    registry.register(FilesWriteSubtool(policy=files_policy, max_file_size=getattr(settings, 'FILES_MAX_SIZE', 10_000_000)))
+    registry.register(FilesReadSubtool(policy=files_policy, max_file_size=getattr(settings, 'FILES_MAX_SIZE', 10_000_000)))
+    registry.register(FilesListSubtool(policy=files_policy, max_file_size=getattr(settings, 'FILES_MAX_SIZE', 10_000_000)))
+    registry.register(FilesExistsSubtool(policy=files_policy, max_file_size=getattr(settings, 'FILES_MAX_SIZE', 10_000_000)))
     
     # Exec tool (admin only by default)
     exec_policy = ToolPolicy(
@@ -162,6 +184,15 @@ __all__ = [
     "validate_tool_args",
     "coerce_value",
     "safe_defaults",
+    # Phase 17 protocol + executor
+    "ToolCall",
+    "ToolResultEnvelope",
+    "ParsedToolCalls",
+    "extract_tool_calls",
+    "extract_tool_results",
+    "render_tool_result",
+    "ToolExecutionContext",
+    "ToolExecutor",
     # Mock tools
     "EchoTool",
     "TimeTool",
@@ -172,6 +203,10 @@ __all__ = [
     # Production tools
     "WebTool",
     "FilesTool",
+    "FilesWriteSubtool",
+    "FilesReadSubtool",
+    "FilesListSubtool",
+    "FilesExistsSubtool",
     "ExecTool",
     "ExecutionMode",
     "MemoryTool",

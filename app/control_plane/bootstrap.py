@@ -67,6 +67,7 @@ def build_context(cli_data_dir: Optional[str] = None) -> ControlPlaneContext:
         agent_service=agent_service,
         session_service=session_service,
         prompt_template_service=prompt_template_service,
+        audit_service=audit_service,
     )
     server_manager = ServerProcessManager(
         pid_file=paths.server_pid_file,

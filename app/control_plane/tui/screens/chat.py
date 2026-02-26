@@ -13,6 +13,7 @@ from app.control_plane.domain.errors import ValidationError
 from app.control_plane.tui.navigation import Route
 from app.control_plane.tui.screens.base import BaseControlScreen
 from app.control_plane.tui.uikit import sanitize_terminal_text
+from app.tools.protocol import extract_tool_results
 
 
 class ChatScreen(BaseControlScreen):
@@ -36,6 +37,7 @@ class ChatScreen(BaseControlScreen):
         self.active_agent_id: str | None = None
         self.active_session_id: str | None = None
         self._pending_task: asyncio.Task | None = None
+        self._verbose_receipts = False
 
     def compose_body(self) -> ComposeResult:
         with Horizontal(classes="cp-row"):
@@ -50,7 +52,9 @@ class ChatScreen(BaseControlScreen):
         if self.initial_agent_id:
             self.agent_input.value = self.initial_agent_id
         self.message_input.focus()
-        self.transcript.write(sanitize_terminal_text("Chat commands: /help /exit /new /status /model /tools /clear"))
+        self.transcript.write(
+            sanitize_terminal_text("Chat commands: /help /exit /new /status /model /tools /receipts /verbose /clear")
+        )
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id != "chat-input":
@@ -130,7 +134,9 @@ class ChatScreen(BaseControlScreen):
             self.jump(Route.DASHBOARD)
             return
         if command == "/help":
-            self.transcript.write(sanitize_terminal_text("/help /exit /new /status /model /tools /clear"))
+            self.transcript.write(
+                sanitize_terminal_text("/help /exit /new /status /model /tools /receipts /verbose /clear")
+            )
             return
         if command == "/new":
             await self._start_chat_session(new=True)
@@ -159,6 +165,18 @@ class ChatScreen(BaseControlScreen):
             else:
                 agent = self.context.agent_service.get_agent(self.active_agent_id)
                 self.transcript.write(sanitize_terminal_text(f"tools> {agent.tool_profile if agent else 'safe'}"))
+            return
+        if command.startswith("/receipts"):
+            limit = 10
+            parts = command.split()
+            if len(parts) > 1 and parts[1].isdigit():
+                limit = max(1, min(100, int(parts[1])))
+            await self._show_receipts(limit=limit)
+            return
+        if command == "/verbose":
+            self._verbose_receipts = not self._verbose_receipts
+            mode = "on" if self._verbose_receipts else "off"
+            self.transcript.write(sanitize_terminal_text(f"receipts verbose {mode}"))
             return
         if command == "/clear":
             self.transcript.clear()
@@ -223,10 +241,54 @@ class ChatScreen(BaseControlScreen):
         self.transcript.clear()
         for item in self.context.session_service.get_transcript(self.active_session_id):
             if item.tool_name:
-                outcome = "ok" if item.tool_ok else "fail"
-                elapsed = f" {item.tool_elapsed_ms}ms" if item.tool_elapsed_ms is not None else ""
-                self.transcript.write(sanitize_terminal_text(f"[tool] {item.tool_name} {outcome}{elapsed}"))
+                envelopes = extract_tool_results(item.content)
+                if envelopes:
+                    for envelope in envelopes:
+                        self.transcript.write(sanitize_terminal_text(self._render_tool_line(envelope)))
+                        if self._verbose_receipts:
+                            self.transcript.write(sanitize_terminal_text(f"  receipt> {envelope.model_dump_json()}"))
+                else:
+                    outcome = "OK" if item.tool_ok else "DENIED"
+                    elapsed = f" {item.tool_elapsed_ms}ms" if item.tool_elapsed_ms is not None else ""
+                    self.transcript.write(sanitize_terminal_text(f"[TOOL] {item.tool_name} {outcome}{elapsed}"))
+                    if self._verbose_receipts:
+                        self.transcript.write(sanitize_terminal_text(f"{item.role}> {item.content}"))
+                continue
             self.transcript.write(sanitize_terminal_text(f"{item.role}> {item.content}"))
+
+    async def _show_receipts(self, limit: int) -> None:
+        if not self.active_session_id:
+            self.transcript.write("receipts> no active session")
+            return
+        receipts = self.context.session_service.get_tool_receipts(self.active_session_id, limit=limit)
+        if not receipts:
+            self.transcript.write("receipts> none")
+            return
+        self.transcript.write(f"receipts> showing {len(receipts)}")
+        for receipt in receipts:
+            self.transcript.write(sanitize_terminal_text(self._render_tool_line(receipt)))
+            if self._verbose_receipts:
+                self.transcript.write(sanitize_terminal_text(f"  receipt> {receipt.model_dump_json()}"))
+
+    @staticmethod
+    def _render_tool_line(envelope) -> str:
+        if envelope.ok:
+            result = envelope.result or {}
+            path = result.get("path") if isinstance(result, dict) else None
+            bytes_written = result.get("bytes") if isinstance(result, dict) else None
+            sha = result.get("sha256") if isinstance(result, dict) else None
+            suffix = ""
+            if path:
+                suffix += f" -> {path}"
+            if bytes_written is not None:
+                suffix += f" ({bytes_written} bytes"
+                if sha:
+                    suffix += f", sha256={sha[:12]}..."
+                suffix += ")"
+            return f"[TOOL] {envelope.tool} OK{suffix}"
+        error = envelope.error or {}
+        reason = error.get("message", "failed") if isinstance(error, dict) else "failed"
+        return f"[TOOL] {envelope.tool} DENIED -> {reason}"
 
     def _resolve_agent(self, optional: bool = False):
         ref = self.agent_input.value.strip()

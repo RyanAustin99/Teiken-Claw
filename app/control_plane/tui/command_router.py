@@ -93,7 +93,7 @@ class TuiCommandRouter:
                 "  models [list|select <model>|validate [model]|pull <model>]",
                 "  agents [list|start|stop|restart|default|delete --yes] <agent>",
                 "  hatch --name <name> [--description <text>] [--model <model>] [--tool-profile <safe|balanced|dangerous>] [--allow-dangerous] [--no-start]",
-                "  chat [start <agent>|continue <agent>|send <message>|history [--limit N]|stop]",
+                "  chat [start <agent>|continue <agent>|send <message>|history [--limit N]|receipts [--limit N]|stop]",
                 "  config [show|set <key> <value> ...]",
                 "  logs [--limit N] [--audit] [--export]",
                 "  server [status|start|stop|restart]",
@@ -255,7 +255,14 @@ class TuiCommandRouter:
 
             if mapped_key in {"dangerous_tools_enabled", "subprocess_runner_enabled", "configured"}:
                 patch[mapped_key] = self._parse_bool(raw_value, key_name=mapped_key)
-            elif mapped_key in {"dev_server_port", "max_inflight_ollama_requests", "max_agent_queue_depth"}:
+            elif mapped_key in {
+                "dev_server_port",
+                "max_inflight_ollama_requests",
+                "max_agent_queue_depth",
+                "max_tool_calls_per_message",
+                "max_tool_turns_per_request",
+                "tool_call_timeout_sec",
+            }:
                 patch[mapped_key] = self._parse_int(raw_value, key_name=mapped_key)
             else:
                 patch[mapped_key] = raw_value
@@ -369,6 +376,30 @@ class TuiCommandRouter:
             lines = [f"History ({len(recent)} messages):"]
             for item in recent:
                 lines.append(f"- {item.role}: {item.content}")
+            return CommandResult(output="\n".join(lines))
+
+        if action == "receipts":
+            if not self.active_session_id:
+                raise ValidationError("No active chat session.")
+            limit = self._option_int(args[1:], "--limit", default=10)
+            receipts = self.context.session_service.get_tool_receipts(self.active_session_id, limit=limit)
+            if not receipts:
+                return CommandResult(output="No tool receipts in active session.")
+            lines = [f"Receipts ({len(receipts)}):"]
+            for item in receipts:
+                if item.ok:
+                    result = item.result or {}
+                    path = result.get("path") if isinstance(result, dict) else None
+                    bytes_written = result.get("bytes") if isinstance(result, dict) else None
+                    summary = f"[TOOL] {item.tool} OK"
+                    if path:
+                        summary += f" -> {path}"
+                    if bytes_written is not None:
+                        summary += f" ({bytes_written} bytes)"
+                    lines.append(summary)
+                else:
+                    reason = item.error.get("message") if isinstance(item.error, dict) else "failed"
+                    lines.append(f"[TOOL] {item.tool} DENIED -> {reason}")
             return CommandResult(output="\n".join(lines))
 
         if action in {"stop", "close"}:

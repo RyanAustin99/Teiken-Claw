@@ -2,31 +2,23 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
-import re
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from app.control_plane.domain.errors import ValidationError
 from app.control_plane.domain.models import AgentRecord, OnboardingStatus
 from app.control_plane.services.agent_prompt_template_service import AgentPromptTemplateService
 from app.control_plane.services.agent_service import AgentService
+from app.control_plane.services.audit_service import AuditService
 from app.control_plane.services.config_service import ConfigService
 from app.control_plane.services.model_service import ModelService
 from app.control_plane.services.session_service import SessionService
-
-TOOL_CALL_TAG_PATTERN = re.compile(
-    r"<TEIKEN_TOOL_CALL>\s*(.*?)\s*</TEIKEN_TOOL_CALL>",
-    re.IGNORECASE | re.DOTALL,
-)
-TOOL_RESULT_OPEN = "<TEIKEN_TOOL_RESULT>"
-TOOL_RESULT_CLOSE = "</TEIKEN_TOOL_RESULT>"
-MAX_TOOL_EXECUTION_TURNS = 4
-MAX_READ_PREVIEW_CHARS = 8000
-MAX_LIST_ITEMS = 200
+from app.tools import register_production_tools
+from app.tools.executor import ToolExecutionContext, ToolExecutor
+from app.tools.loop import run_tool_loop
+from app.tools.protocol import ToolResultEnvelope
+from app.tools.registry import get_tool_registry
 
 
 TOOL_PROFILE_CAPABILITIES: Dict[str, List[str]] = {
@@ -56,36 +48,13 @@ TOOL_PROFILE_DEFAULT_TOOLS: Dict[str, List[str]] = {
 
 
 @dataclass
-class ToolExecutionEvent:
-    call_id: str
-    tool: str
-    ok: bool
-    elapsed_ms: int
-    result: Dict[str, Any] = field(default_factory=dict)
-    error: Optional[str] = None
-
-    def receipt(self) -> str:
-        payload: Dict[str, Any] = {
-            "id": self.call_id,
-            "ok": self.ok,
-            "tool": self.tool,
-            "elapsed_ms": self.elapsed_ms,
-        }
-        if self.ok:
-            payload["result"] = self.result
-        else:
-            payload["error"] = self.error or "tool execution failed"
-        return f"{TOOL_RESULT_OPEN}\n{json.dumps(payload, ensure_ascii=False)}\n{TOOL_RESULT_CLOSE}"
-
-
-@dataclass
 class ConversationResponse:
     response: str
-    tool_events: List[ToolExecutionEvent] = field(default_factory=list)
+    tool_events: List[ToolResultEnvelope] = field(default_factory=list)
 
 
 class AgentConversationService:
-    """Builds contextual agent messages and enforces onboarding flow."""
+    """Build contextual agent messages and enforce onboarding + tool protocol."""
 
     def __init__(
         self,
@@ -94,18 +63,35 @@ class AgentConversationService:
         agent_service: AgentService,
         session_service: SessionService,
         prompt_template_service: AgentPromptTemplateService,
+        audit_service: Optional[AuditService] = None,
     ) -> None:
         self.config_service = config_service
         self.model_service = model_service
         self.agent_service = agent_service
         self.session_service = session_service
         self.prompt_template_service = prompt_template_service
+        self.audit_service = audit_service
+        self.tool_registry = get_tool_registry()
+        existing_tools = set(self.tool_registry.list_tools())
+        required = {"files.write", "files.read", "files.list", "files.exists"}
+        if not required.issubset(existing_tools):
+            register_production_tools(self.tool_registry)
+        self.tool_executor = ToolExecutor(self.tool_registry)
 
     async def generate_response(self, agent_id: str, session_id: str, user_message: str) -> str:
-        result = await self.generate_response_with_tools(agent_id=agent_id, session_id=session_id, user_message=user_message)
+        result = await self.generate_response_with_tools(
+            agent_id=agent_id,
+            session_id=session_id,
+            user_message=user_message,
+        )
         return result.response
 
-    async def generate_response_with_tools(self, agent_id: str, session_id: str, user_message: str) -> ConversationResponse:
+    async def generate_response_with_tools(
+        self,
+        agent_id: str,
+        session_id: str,
+        user_message: str,
+    ) -> ConversationResponse:
         agent = self.agent_service.get_agent(agent_id)
         if not agent:
             raise ValidationError("Unknown agent for chat request.", details={"agent_id": agent_id})
@@ -142,43 +128,34 @@ class AgentConversationService:
                 continue
             messages.append({"role": item.role, "content": item.content})
 
-        tool_events: List[ToolExecutionEvent] = []
-        for _ in range(MAX_TOOL_EXECUTION_TURNS):
-            assistant_output = await self.model_service.chat_messages(messages=messages, model=agent.model)
-            calls, parse_errors = self._extract_tool_calls(assistant_output)
-            if parse_errors:
-                tool_events.extend(parse_errors)
+        context = ToolExecutionContext(
+            agent_id=agent.id,
+            session_id=session.id,
+            chat_id=f"cp:{agent.id}",
+            is_admin=agent.tool_profile == "dangerous",
+            tool_profile=agent.tool_profile,
+            workspace_root=Path(agent.workspace_path).expanduser().resolve(),
+            actor="control_plane",
+            correlation_id=f"cp-{session.id}",
+            max_calls_per_message=max(1, cfg.max_tool_calls_per_message),
+            timeout_sec=max(1.0, float(cfg.tool_call_timeout_sec)),
+            audit_log=self._audit_log,
+        )
 
-            if not calls:
-                return ConversationResponse(response=assistant_output, tool_events=tool_events)
+        async def _model_call(loop_messages: List[Dict[str, str]]) -> tuple[str, List[Dict[str, object]]]:
+            output = await self.model_service.chat_messages(messages=loop_messages, model=agent.model)
+            return output, []
 
-            messages.append({"role": "assistant", "content": assistant_output})
-            turn_events: List[ToolExecutionEvent] = []
-            for call in calls:
-                turn_events.append(self._execute_tool_call(agent, call))
-            tool_events.extend(turn_events)
-
-            receipt_lines = [event.receipt() for event in turn_events]
-            if parse_errors:
-                receipt_lines.extend(event.receipt() for event in parse_errors)
-            messages.append(
-                {
-                    "role": "user",
-                    "content": (
-                        "Tool execution receipts:\n"
-                        + "\n".join(receipt_lines)
-                        + "\nUse receipts above. If more actions are needed, emit TEIKEN_TOOL_CALL blocks only. "
-                        "Otherwise provide the final response for the user."
-                    ),
-                }
-            )
-
+        loop_result = await run_tool_loop(
+            initial_messages=messages,
+            model_call=_model_call,
+            executor=self.tool_executor,
+            execution_context=context,
+            max_tool_turns_per_request=max(1, cfg.max_tool_turns_per_request),
+        )
         return ConversationResponse(
-            response=(
-                "I reached the maximum tool execution turns for this request. "
-                "Please narrow the scope and try again."
-            ),
-            tool_events=tool_events,
+            response=loop_result.final_response,
+            tool_events=loop_result.tool_events,
         )
 
     def _handle_onboarding(self, agent_id: str, session_id: str, message: str) -> Optional[str]:
@@ -212,14 +189,12 @@ class AgentConversationService:
 
         if step == 2:
             patch: Dict[str, object] = {"agent_profile_agent_name": answer}
-            # Keep display name aligned if user renames the hatched agent.
             if answer and answer != agent.name:
                 patch["name"] = answer
             self.agent_service.update_agent(agent_id, patch)
             self.session_service.update_onboarding(session_id, OnboardingStatus.IN_PROGRESS, step=3)
             return "Got it. What is my primary purpose for you? (one short paragraph)"
 
-        # Final onboarding step.
         self.agent_service.update_onboarding_profile(agent_id, purpose=answer, complete=True)
         self.session_service.update_onboarding(session_id, OnboardingStatus.COMPLETE, step=3)
         return (
@@ -227,12 +202,9 @@ class AgentConversationService:
             "Tell me the first task you want me to execute."
         )
 
-    @staticmethod
-    def _resolve_tools(tool_profile: str) -> List[str]:
+    def _resolve_tools(self, tool_profile: str) -> List[str]:
         try:
-            from app.tools.registry import get_tool_registry
-
-            registered = get_tool_registry().list_tools()
+            registered = self.tool_registry.list_tools()
         except Exception:
             registered = []
 
@@ -253,161 +225,13 @@ class AgentConversationService:
         except Exception:
             return []
 
-    @staticmethod
-    def _extract_tool_calls(model_output: str) -> tuple[List[Dict[str, Any]], List[ToolExecutionEvent]]:
-        calls: List[Dict[str, Any]] = []
-        errors: List[ToolExecutionEvent] = []
-        matches = list(TOOL_CALL_TAG_PATTERN.finditer(model_output))
-        if not matches:
-            return calls, errors
-
-        for index, match in enumerate(matches, start=1):
-            call_id = f"tc_parse_{index}"
-            block = (match.group(1) or "").strip()
-            try:
-                payload = json.loads(block)
-                if not isinstance(payload, dict):
-                    raise ValueError("tool call payload must be an object")
-                tool_name = str(payload.get("tool", "")).strip()
-                if not tool_name:
-                    raise ValueError("missing 'tool' field")
-                args = payload.get("args", {})
-                if args is None:
-                    args = {}
-                if not isinstance(args, dict):
-                    raise ValueError("'args' must be an object")
-                payload["id"] = str(payload.get("id") or call_id)
-                payload["tool"] = tool_name
-                payload["args"] = args
-                calls.append(payload)
-            except Exception as exc:
-                errors.append(
-                    ToolExecutionEvent(
-                        call_id=call_id,
-                        tool="invalid",
-                        ok=False,
-                        elapsed_ms=0,
-                        error=f"invalid tool envelope: {exc}",
-                    )
-                )
-        return calls, errors
-
-    def _execute_tool_call(self, agent: AgentRecord, payload: Dict[str, Any]) -> ToolExecutionEvent:
-        call_id = str(payload.get("id") or f"tc_{int(time.time() * 1000)}")
-        tool_name = str(payload.get("tool", "invalid"))
-        args = payload.get("args", {})
-        started = time.perf_counter()
-        try:
-            result = self._run_tool(agent, tool_name, args if isinstance(args, dict) else {})
-            elapsed = int((time.perf_counter() - started) * 1000)
-            return ToolExecutionEvent(
-                call_id=call_id,
-                tool=tool_name,
-                ok=True,
-                elapsed_ms=elapsed,
-                result=result,
-            )
-        except Exception as exc:
-            elapsed = int((time.perf_counter() - started) * 1000)
-            return ToolExecutionEvent(
-                call_id=call_id,
-                tool=tool_name,
-                ok=False,
-                elapsed_ms=elapsed,
-                error=str(exc),
-            )
-
-    def _run_tool(self, agent: AgentRecord, tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
-        allowed_tools = self._allowed_tools_for_profile(agent.tool_profile)
-        if tool_name not in allowed_tools:
-            raise ValidationError(
-                f"Tool '{tool_name}' is not allowed for profile '{agent.tool_profile}'.",
-                details={"allowed_tools": sorted(allowed_tools)},
-            )
-
-        workspace_root = Path(agent.workspace_path).expanduser().resolve()
-        workspace_root.mkdir(parents=True, exist_ok=True)
-        if tool_name == "files.write":
-            path = str(args.get("path", "")).strip()
-            content = args.get("content", "")
-            if not path:
-                raise ValidationError("files.write requires 'path'.")
-            if not isinstance(content, str):
-                content = str(content)
-            target = self._resolve_workspace_path(workspace_root, path)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
-            digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
-            return {"path": path.replace("\\", "/"), "bytes": len(content.encode("utf-8")), "sha256": digest}
-
-        if tool_name == "files.read":
-            path = str(args.get("path", "")).strip()
-            if not path:
-                raise ValidationError("files.read requires 'path'.")
-            target = self._resolve_workspace_path(workspace_root, path)
-            if not target.exists() or not target.is_file():
-                raise ValidationError(f"File not found: {path}")
-            content = target.read_text(encoding="utf-8")
-            preview = content[:MAX_READ_PREVIEW_CHARS]
-            return {
-                "path": path.replace("\\", "/"),
-                "bytes": len(content.encode("utf-8")),
-                "content": preview,
-                "truncated": len(preview) < len(content),
-            }
-
-        if tool_name == "files.list":
-            dir_path = str(args.get("dir", ".")).strip() or "."
-            target = self._resolve_workspace_path(workspace_root, dir_path)
-            if not target.exists() or not target.is_dir():
-                raise ValidationError(f"Directory not found: {dir_path}")
-            entries = sorted(target.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower()))
-            items = []
-            for item in entries[:MAX_LIST_ITEMS]:
-                items.append(
-                    {
-                        "name": item.name,
-                        "kind": "dir" if item.is_dir() else "file",
-                    }
-                )
-            return {
-                "dir": dir_path.replace("\\", "/"),
-                "count": len(entries),
-                "items": items,
-                "truncated": len(entries) > MAX_LIST_ITEMS,
-            }
-
-        if tool_name == "files.exists":
-            path = str(args.get("path", "")).strip()
-            if not path:
-                raise ValidationError("files.exists requires 'path'.")
-            target = self._resolve_workspace_path(workspace_root, path)
-            return {
-                "path": path.replace("\\", "/"),
-                "exists": target.exists(),
-                "kind": "dir" if target.is_dir() else ("file" if target.is_file() else "missing"),
-            }
-
-        raise ValidationError(f"Unsupported tool: {tool_name}")
-
-    @staticmethod
-    def _allowed_tools_for_profile(tool_profile: str) -> set[str]:
-        if tool_profile == "dangerous":
-            return {"files.write", "files.read", "files.list", "files.exists"}
-        if tool_profile == "balanced":
-            return {"files.write", "files.read", "files.list", "files.exists"}
-        return {"files.read", "files.list", "files.exists"}
-
-    @staticmethod
-    def _resolve_workspace_path(workspace_root: Path, relative_path: str) -> Path:
-        path_obj = Path(relative_path)
-        if path_obj.is_absolute():
-            raise ValidationError("Absolute paths are not allowed. Use paths relative to agent workspace.")
-        if any(part == ".." for part in path_obj.parts):
-            raise ValidationError("Path traversal is blocked. Use workspace-relative paths only.")
-        resolved = (workspace_root / path_obj).resolve()
-        try:
-            resolved.relative_to(workspace_root)
-        except ValueError as exc:  # pragma: no cover - defensive guard
-            raise ValidationError("Resolved path escapes workspace.") from exc
-        return resolved
+    def _audit_log(
+        self,
+        action: str,
+        target: Optional[str],
+        details: Optional[Dict[str, object]],
+        actor: str,
+    ) -> None:
+        if not self.audit_service:
+            return
+        self.audit_service.log(action=action, target=target, details=details, actor=actor)

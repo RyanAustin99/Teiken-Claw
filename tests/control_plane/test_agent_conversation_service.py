@@ -137,3 +137,39 @@ def test_conversation_does_not_execute_markdown_code_fence_tool_text(tmp_path):
     assert "files.write" in result.response
     assert not result.tool_events
     assert not (Path(agent.workspace_path) / "hello.md").exists()
+
+
+def test_conversation_denies_disallowed_tool_profile(tmp_path):
+    context = build_context(cli_data_dir=str(tmp_path / "cp_data"))
+    agent = context.agent_service.create_agent(name="safe-agent", tool_profile="safe")
+    session = context.session_service.new_session(agent.id, title="chat")
+    context.agent_service.update_onboarding_profile(
+        agent.id,
+        user_name="Ryan",
+        preferred_agent_name="Safe",
+        purpose="Test denial",
+        complete=True,
+    )
+    context.session_service.update_onboarding(session.id, status=OnboardingStatus.COMPLETE, step=3)
+
+    outputs = iter(
+        [
+            (
+                "<TEIKEN_TOOL_CALL>\n"
+                '{"id":"tc_1","tool":"files.write","args":{"path":"hello.md","content":"Hello"}}\n'
+                "</TEIKEN_TOOL_CALL>"
+            ),
+            "I cannot write files with the current safe tool profile.",
+        ]
+    )
+
+    async def _fake_chat_messages(messages, model=None, tools=None):
+        return next(outputs)
+
+    context.model_service.chat_messages = _fake_chat_messages
+    result = _run(context.conversation_service.generate_response_with_tools(agent.id, session.id, "Create hello.md"))
+
+    assert result.tool_events
+    assert result.tool_events[0].ok is False
+    assert result.tool_events[0].error["type"] == "not_allowed"
+    assert not (Path(agent.workspace_path) / "hello.md").exists()

@@ -518,7 +518,7 @@ def chat_command(
 
 
 def _chat_loop(cp: ControlPlaneContext, agent_id: str, session_id: str) -> None:
-    console.print("Chat started. Commands: /help /exit /new /status /model /tools /clear")
+    console.print("Chat started. Commands: /help /exit /new /status /model /tools /receipts /clear")
     while True:
         text = typer.prompt("you")
         if not text.strip():
@@ -527,7 +527,7 @@ def _chat_loop(cp: ControlPlaneContext, agent_id: str, session_id: str) -> None:
         if cmd in ("/exit", "/quit"):
             return
         if cmd == "/help":
-            console.print("/help /exit /new /status /model /tools /clear")
+            console.print("/help /exit /new /status /model /tools /receipts /clear")
             continue
         if cmd == "/new":
             session_id = cp.session_service.new_session(agent_id, title="new session").id
@@ -544,6 +544,30 @@ def _chat_loop(cp: ControlPlaneContext, agent_id: str, session_id: str) -> None:
             continue
         if cmd == "/tools":
             console.print("Tool profile view is available in agents config (safe by default).")
+            continue
+        if cmd.startswith("/receipts"):
+            limit = 10
+            parts = cmd.split()
+            if len(parts) > 1 and parts[1].isdigit():
+                limit = max(1, min(100, int(parts[1])))
+            receipts = cp.session_service.get_tool_receipts(session_id, limit=limit)
+            if not receipts:
+                console.print("receipts> none")
+                continue
+            for item in receipts:
+                if item.ok:
+                    result = item.result or {}
+                    path = result.get("path") if isinstance(result, dict) else None
+                    bytes_written = result.get("bytes") if isinstance(result, dict) else None
+                    summary = f"[TOOL] {item.tool} OK"
+                    if path:
+                        summary += f" -> {path}"
+                    if bytes_written is not None:
+                        summary += f" ({bytes_written} bytes)"
+                    console.print(summary)
+                else:
+                    reason = item.error.get("message") if isinstance(item.error, dict) else "failed"
+                    console.print(f"[TOOL] {item.tool} DENIED -> {reason}")
             continue
         if cmd == "/clear":
             console.clear()

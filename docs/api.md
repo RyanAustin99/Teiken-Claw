@@ -79,6 +79,11 @@ Agent chat contract (control plane):
   - agent name confirmation/rename
   - primary purpose
 - Hatch/runtime start failure keeps agent record in `crashed` status with recovery actions (`doctor`, `models`, restart/edit).
+- Tool execution trust contract:
+  - only `<TEIKEN_TOOL_CALL>...</TEIKEN_TOOL_CALL>` envelopes are executable
+  - markdown/code-fence pseudo-calls are never executed
+  - runtime emits `<TEIKEN_TOOL_RESULT>...</TEIKEN_TOOL_RESULT>` receipts
+  - receipts are visible in chat and retrievable via `/receipts`.
 
 Install-time boot UX contract:
 

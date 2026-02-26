@@ -103,6 +103,7 @@ Program outcome on 2026-02-25:
 - [x] Phase 14: 1.20.1 CI hotfix + multi-screen TUI shell/palette overhaul (`772f0c5`, `74c29e1`, `3256973`, `e81f64b`)
 - [x] Phase 15: 1.20.2 hatch crash recovery + agent-contextual chat runtime (this update)
 - [x] Phase 16: 1.20.3 install-time dynamic boot UI + `teiken-claw run` flow
+- [x] Phase 17: Trust layer + autonomy parity (canonical tool envelopes, shared executor, chat/scheduler parity, receipt/audit visibility)
 
 ### Validation Ledger (1.20 workstream)
 
@@ -136,6 +137,9 @@ Program outcome on 2026-02-25:
 | 2026-02-26 | `venv\\Scripts\\python.exe -m pytest -q tests/control_plane/test_hatch_screen.py tests/control_plane/test_hatch_flow.py tests/control_plane/test_tui_shell.py` | PASS | Hatch recovery UX pass: worker error guard + correlation-id recovery messaging |
 | 2026-02-26 | `venv\\Scripts\\python.exe -m pytest -q` | PASS | `674 passed, 1 skipped` after hatch-screen hardening |
 | 2026-02-26 | `venv\\Scripts\\python.exe -m flake8 --select=E9,F63,F7 --show-source --statistics app/ tests/ scripts/` | PASS | Lint/syntax gate remains green after hatch UX updates |
+| 2026-02-26 | `venv\\Scripts\\python.exe -m pytest -q tests/test_tools_protocol.py tests/test_tools_executor.py tests/test_files_tool_phase17.py tests/control_plane/test_agent_conversation_service.py tests/control_plane/test_tui_command_router.py tests/test_agent_runtime.py tests/test_agent_runtime_phase17.py` | PASS | Phase 17 parser/executor/files/chat/runtime trust gates (`36 passed, 1 skipped`) |
+| 2026-02-26 | `venv\\Scripts\\python.exe -m pytest -q` | PASS | `691 passed, 1 skipped` after Phase 17 trust-layer integration |
+| 2026-02-26 | `powershell -ExecutionPolicy Bypass -File scripts\\e2e_control_plane.ps1 -SkipOllamaDependent` | PASS | Control-plane smoke remained green after Phase 17 runtime/tool receipt changes |
 
 ### Phase 12/13 Closure Notes
 
@@ -209,3 +213,29 @@ Program outcome on 2026-02-25:
    - max inflight Ollama requests
    - max agent queue depth
 7. Model presence default policy is warn/continue; strict fail mode available via `STRICT_MODEL_CHECK=1`.
+
+### 1.20.4 Phase 17 Trust Layer Notes
+
+1. Added canonical tool protocol module (`app/tools/protocol.py`) with strict `<TEIKEN_TOOL_CALL>` parsing and `<TEIKEN_TOOL_RESULT>` receipts.
+2. Added shared executor (`app/tools/executor.py`) enforcing:
+   - tool existence checks
+   - profile permissions
+   - control-state pause checks
+   - timeouts and bounded calls per model turn
+   - structured audit events (`tool_call_detected/denied/started/succeeded/failed`).
+3. Added shared loop orchestration (`app/tools/loop.py`) and routed both:
+   - control-plane conversation runtime
+   - backend/scheduler queue runtime (`app/agent/runtime.py`)
+   through the same parser/executor/receipt contract.
+4. Canonical files tools are now registered with stable names:
+   - `files.write`
+   - `files.read`
+   - `files.list`
+   - `files.exists`
+   while legacy `files` action API remains for compatibility.
+5. Files trust contract now enforces workspace-relative path sandboxing and runtime-generated receipts (`path`, `bytes`, `sha256`, `created_at`).
+6. Chat receipt visibility improved:
+   - TUI chat transcript renders `[TOOL] ...` summaries
+   - `/receipts` command added (CLI/TUI chat flows)
+   - optional `/verbose` toggle shows full receipt JSON in TUI chat.
+7. Prompt contract updated to explicitly forbid fake side-effect claims without runtime receipts and to ban code-fence pseudo tool calls.

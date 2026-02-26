@@ -22,6 +22,9 @@ class ConfigService:
         "dev_server_port",
         "max_inflight_ollama_requests",
         "max_agent_queue_depth",
+        "max_tool_calls_per_message",
+        "max_tool_turns_per_request",
+        "tool_call_timeout_sec",
     }
 
     ENV_MAP = {

@@ -19,6 +19,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from pydantic import BaseModel
@@ -35,6 +36,8 @@ from app.agent.errors import (
 from app.agent.context_builder import ContextBuilder, get_context_builder
 from app.queue.jobs import Job
 from app.tools.base import ToolResult
+from app.tools.executor import ToolExecutionContext, ToolExecutor
+from app.tools.loop import run_tool_loop
 from app.tools.registry import ToolRegistry, get_tool_registry
 
 # Memory system imports
@@ -137,6 +140,13 @@ class AgentRuntime:
         self.tool_registry = tool_registry or get_tool_registry()
         self.context_builder = context_builder or get_context_builder()
         self.max_tool_turns = max_tool_turns
+        existing_tools = set(self.tool_registry.list_tools())
+        required = {"files.write", "files.read", "files.list", "files.exists"}
+        if not required.issubset(existing_tools):
+            from app.tools import register_production_tools
+
+            register_production_tools(self.tool_registry)
+        self.tool_executor = ToolExecutor(self.tool_registry)
         
         logger.info(
             f"AgentRuntime initialized: max_tool_turns={max_tool_turns}",
@@ -169,183 +179,141 @@ class AgentRuntime:
         if skill_result:
             return skill_result
         
-        # Track tool calls for duplicate detection
-        tool_call_history: List[ToolCallRecord] = []
-        
         # Persist user message to memory
         await self._persist_user_message(job)
-        
-        # Build initial context
+
         messages = await self._build_initial_context(job)
-        
-        # Get available tools
         tools = self._get_tools_for_context(job)
-        
-        # Main agent loop
-        turn = 0
-        while turn < self.max_tool_turns + 1:
-            turn += 1
-            
-            logger.debug(
-                f"Agent loop turn {turn}",
-                extra={"event": "agent_turn", "turn": turn, "job_id": job.job_id}
-            )
-            
+        workspace_hint = (job.payload or {}).get("workspace_root") or (job.payload or {}).get("workspace_path")
+        workspace_root = None
+        if workspace_hint:
             try:
-                # Call Ollama
-                response = await self._call_ollama_with_retry(
-                    messages=messages,
-                    tools=tools,
-                )
-                
-                # Check if we have a final response (no tool calls)
-                tool_calls = self._extract_tool_calls(response)
-                
-                if not tool_calls:
-                    # Final response - we're done
-                    final_content = response.message.content or ""
-                    
-                    # Persist assistant message
-                    await self._persist_assistant_message(
-                        job=job,
-                        response=final_content,
-                        tool_calls=len(tool_call_history)
-                    )
-                    
-                    # Trigger memory extraction
-                    user_message = job.payload.get("text", "") or job.payload.get("message", "")
-                    session_id = job.session_id or f"chat:{job.chat_id}"
-                    thread_id = job.thread_id or await self._get_thread_id(job)
-                    
-                    if settings.AUTO_MEMORY_ENABLED and thread_id:
-                        await self._trigger_memory_extraction(
-                            session_id=session_id,
-                            thread_id=thread_id,
-                            user_message=user_message,
-                            assistant_message=final_content
-                        )
-                    
-                    logger.info(
-                        f"Agent run completed: {job.job_id}",
-                        extra={
-                            "event": "agent_run_complete",
-                            "job_id": job.job_id,
-                            "turns": turn,
-                            "response_length": len(final_content),
-                        }
-                    )
-                    
-                    return AgentResult(
-                        ok=True,
-                        response=final_content,
-                        tool_calls=len(tool_call_history),
-                        tool_results=[],
-                        metadata={"turns": turn},
-                    )
-                
-                # Process tool calls
-                tool_results = await self._process_tool_calls(
-                    tool_calls=tool_calls,
-                    tool_call_history=tool_call_history,
-                    context=self._build_tool_context(job),
-                )
-                
-                # Append assistant message with tool calls
-                messages.append({
-                    "role": "assistant",
-                    "content": response.message.content or "",
-                    "tool_calls": tool_calls,
-                })
-                
-                # Append tool result messages
-                for result in tool_results:
-                    messages.append({
-                        "role": "tool",
-                        "content": result.get("content", ""),
-                        "name": result.get("tool_name", ""),
-                    })
-                
-                # Check if we should continue
-                if not self._should_continue(tool_results):
-                    # One of the tools indicated we should stop
-                    logger.info(
-                        f"Tool indicated stop: {job.job_id}",
-                        extra={"event": "tool_stop", "job_id": job.job_id}
-                    )
-                    
-                    # Get final response
-                    final_response = await self._call_ollama_with_retry(
-                        messages=messages,
-                        tools=None,  # No tools for final response
-                    )
-                    
-                    return AgentResult(
-                        ok=True,
-                        response=final_response.message.content or "",
-                        tool_calls=len(tool_call_history),
-                        tool_results=tool_results,
-                        metadata={"turns": turn, "stopped_by_tool": True},
-                    )
-                
-            except CircuitBreakerOpenError as e:
-                logger.error(
-                    f"Circuit breaker open: {e}",
-                    extra={"event": "circuit_breaker_open", "job_id": job.job_id}
-                )
-                return AgentResult(
-                    ok=False,
-                    error="Service temporarily unavailable. Please try again later.",
-                    error_code="CIRCUIT_BREAKER_OPEN",
-                    metadata={"breaker_name": e.breaker_name},
-                )
-                
-            except OllamaTransportError as e:
-                logger.error(
-                    f"Ollama transport error: {e}",
-                    extra={"event": "ollama_transport_error", "job_id": job.job_id}
-                )
-                return AgentResult(
-                    ok=False,
-                    error="Failed to connect to AI service. Please try again.",
-                    error_code="TRANSPORT_ERROR",
-                    metadata={"endpoint": e.endpoint},
-                )
-                
-            except OllamaError as e:
-                logger.error(
-                    f"Ollama error: {e}",
-                    extra={"event": "ollama_error", "job_id": job.job_id}
-                )
-                return AgentResult(
-                    ok=False,
-                    error=f"AI service error: {e.message}",
-                    error_code="OLLAMA_ERROR",
-                    metadata={"details": e.details},
-                )
-                
-            except Exception as e:
-                logger.exception(
-                    f"Unexpected error in agent loop: {e}",
-                    extra={"event": "agent_error", "job_id": job.job_id}
-                )
-                return AgentResult(
-                    ok=False,
-                    error="An unexpected error occurred. Please try again.",
-                    error_code="INTERNAL_ERROR",
-                    metadata={"error_type": type(e).__name__},
-                )
-        
-        # Max turns exceeded
-        logger.warning(
-            f"Max tool turns exceeded: {job.job_id}",
-            extra={"event": "max_turns_exceeded", "job_id": job.job_id, "turns": turn}
+                workspace_root = Path(str(workspace_hint)).expanduser().resolve()
+            except Exception:
+                workspace_root = None
+        execution_context = ToolExecutionContext(
+            agent_id=job.payload.get("agent_id"),
+            session_id=job.session_id,
+            scheduler_job_id=(job.payload or {}).get("scheduler_job_id") or (job.payload or {}).get("job_id"),
+            scheduler_run_id=(job.payload or {}).get("scheduler_run_id") or (job.payload or {}).get("run_id"),
+            chat_id=job.chat_id,
+            is_admin=bool(job.payload.get("is_admin", False)),
+            tool_profile=str(job.payload.get("tool_profile", "balanced")),
+            workspace_root=workspace_root,
+            actor="agent_runtime",
+            correlation_id=f"job-{job.job_id}",
+            max_calls_per_message=3,
+            timeout_sec=30.0,
+            audit_log=self._audit_tool_event,
         )
-        
+
+        async def _model_call(loop_messages: List[Dict[str, Any]]) -> tuple[str, List[Dict[str, Any]]]:
+            response = await self._call_ollama_with_retry(messages=loop_messages, tools=tools)
+            native_calls = self._extract_tool_calls(response)
+            return response.message.content or "", native_calls
+
+        try:
+            loop_result = await run_tool_loop(
+                initial_messages=messages,
+                model_call=_model_call,
+                executor=self.tool_executor,
+                execution_context=execution_context,
+                max_tool_turns_per_request=self.max_tool_turns,
+            )
+        except CircuitBreakerOpenError as e:
+            logger.error(
+                f"Circuit breaker open: {e}",
+                extra={"event": "circuit_breaker_open", "job_id": job.job_id}
+            )
+            return AgentResult(
+                ok=False,
+                error="Service temporarily unavailable. Please try again later.",
+                error_code="CIRCUIT_BREAKER_OPEN",
+                metadata={"breaker_name": e.breaker_name},
+            )
+        except OllamaTransportError as e:
+            logger.error(
+                f"Ollama transport error: {e}",
+                extra={"event": "ollama_transport_error", "job_id": job.job_id}
+            )
+            return AgentResult(
+                ok=False,
+                error="Failed to connect to AI service. Please try again.",
+                error_code="TRANSPORT_ERROR",
+                metadata={"endpoint": e.endpoint},
+            )
+        except OllamaError as e:
+            logger.error(
+                f"Ollama error: {e}",
+                extra={"event": "ollama_error", "job_id": job.job_id}
+            )
+            return AgentResult(
+                ok=False,
+                error=f"AI service error: {e.message}",
+                error_code="OLLAMA_ERROR",
+                metadata={"details": e.details},
+            )
+        except Exception as e:
+            logger.exception(
+                f"Unexpected error in agent loop: {e}",
+                extra={"event": "agent_error", "job_id": job.job_id}
+            )
+            return AgentResult(
+                ok=False,
+                error="An unexpected error occurred. Please try again.",
+                error_code="INTERNAL_ERROR",
+                metadata={"error_type": type(e).__name__},
+            )
+
+        final_content = loop_result.final_response or ""
+        tool_events = loop_result.tool_events
+        tool_call_count = len([item for item in tool_events if item.tool != "invalid"])
+
+        if loop_result.turns >= self.max_tool_turns and "maximum tool execution turns" in final_content.lower():
+            return AgentResult(
+                ok=False,
+                error="Maximum tool calls exceeded. Please simplify your request.",
+                error_code="MAX_TURNS_EXCEEDED",
+                tool_calls=tool_call_count,
+                tool_results=[item.model_dump(exclude_none=True) for item in tool_events],
+                metadata={"turns": loop_result.turns, "max_turns": self.max_tool_turns},
+            )
+
+        await self._persist_assistant_message(
+            job=job,
+            response=final_content,
+            tool_calls=tool_call_count,
+        )
+
+        user_message = job.payload.get("text", "") or job.payload.get("message", "")
+        session_id = job.session_id or f"chat:{job.chat_id}"
+        thread_id = job.thread_id or await self._get_thread_id(job)
+
+        if settings.AUTO_MEMORY_ENABLED and thread_id:
+            await self._trigger_memory_extraction(
+                session_id=session_id,
+                thread_id=thread_id,
+                user_message=user_message,
+                assistant_message=final_content,
+            )
+
+        logger.info(
+            f"Agent run completed: {job.job_id}",
+            extra={
+                "event": "agent_run_complete",
+                "job_id": job.job_id,
+                "turns": loop_result.turns,
+                "response_length": len(final_content),
+                "tool_calls": tool_call_count,
+            }
+        )
+
         return AgentResult(
-            ok=False,
-            error="Maximum tool calls exceeded. Please simplify your request.",
-            error_code="MAX_TURNS_EXCEEDED",
-            metadata={"turns": turn, "max_turns": self.max_tool_turns},
+            ok=True,
+            response=final_content,
+            tool_calls=tool_call_count,
+            tool_results=[item.model_dump(exclude_none=True) for item in tool_events],
+            metadata={"turns": loop_result.turns},
         )
     
     async def _build_initial_context(self, job: Job) -> List[Dict[str, Any]]:
@@ -644,6 +612,24 @@ class AgentRuntime:
                 "chat_id": context.get("chat_id"),
                 "error_code": result.error_code,
             }
+        )
+
+    def _audit_tool_event(
+        self,
+        action: str,
+        target: Optional[str],
+        details: Optional[Dict[str, Any]],
+        actor: str,
+    ) -> None:
+        payload = details or {}
+        logger.info(
+            "Tool audit event",
+            extra={
+                "event": action,
+                "target": target,
+                "actor": actor,
+                "details": payload,
+            },
         )
 
     async def _check_skill_trigger(self, job: Job) -> Optional[AgentResult]:

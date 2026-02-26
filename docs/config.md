@@ -37,6 +37,10 @@ Use `teiken config` or TUI Config screen to set:
 - Safety toggles
 - Data directory (advanced)
 - Agent prompt template version (`agent_prompt_template_version`)
+- Tool loop limits:
+  - `max_tool_calls_per_message` (default `3`)
+  - `max_tool_turns_per_request` (default `8`)
+  - `tool_call_timeout_sec` (default `30`)
 
 Preferred UX path is the Setup Wizard screen (Step 1..6) launched on first run,
 with `Ctrl+S` save behavior on editable screens.
@@ -83,3 +87,9 @@ On first chat turn for an onboarding-incomplete agent, the control plane asks:
 3. Agent purpose
 
 These answers are persisted per agent and reused in future sessions.
+
+## Tool Trust Contract
+
+- Side effects execute only from `<TEIKEN_TOOL_CALL>...</TEIKEN_TOOL_CALL>` envelopes.
+- Markdown/code-fence pseudo-calls are treated as plain text.
+- Runtime emits canonical tool receipts (`<TEIKEN_TOOL_RESULT>...</TEIKEN_TOOL_RESULT>`) and chat `/receipts` shows recent receipts.

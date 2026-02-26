@@ -18,6 +18,7 @@ from app.control_plane.services.audit_service import AuditService
 from app.control_plane.services.config_service import ConfigService
 from app.control_plane.services.model_service import ModelService
 from app.control_plane.services.session_service import SessionService
+from app.tools.protocol import render_tool_result
 
 
 class RuntimeSupervisor:
@@ -188,7 +189,7 @@ class RuntimeSupervisor:
             for tool_event in conversation.tool_events:
                 self.session_service.append_assistant_message(
                     session_id=session_id,
-                    content=tool_event.receipt(),
+                    content=render_tool_result(tool_event),
                     tool_name=tool_event.tool,
                     tool_ok=tool_event.ok,
                     tool_elapsed_ms=tool_event.elapsed_ms,

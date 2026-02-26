@@ -21,10 +21,14 @@ Security Considerations:
     - Delete operations require admin privileges
 """
 
+import hashlib
+import json
 import os
 import logging
 import asyncio
 import aiofiles
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from datetime import datetime
@@ -61,6 +65,48 @@ BINARY_EXTENSIONS = {
     '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
     '.db', '.sqlite', '.sqlite3',
 }
+
+_RUNTIME_WORKSPACE_ROOT: ContextVar[Optional[Path]] = ContextVar(
+    "runtime_workspace_root",
+    default=None,
+)
+
+
+@contextmanager
+def runtime_workspace_root(path: Optional[Path]):
+    """Temporarily set a runtime workspace root for canonical file sub-tools."""
+    token = _RUNTIME_WORKSPACE_ROOT.set(path.resolve() if path else None)
+    try:
+        yield
+    finally:
+        _RUNTIME_WORKSPACE_ROOT.reset(token)
+
+
+def _resolve_runtime_workspace(default_workspace: str = DEFAULT_WORKSPACE) -> Path:
+    root = _RUNTIME_WORKSPACE_ROOT.get()
+    if root is not None:
+        root.mkdir(parents=True, exist_ok=True)
+        return root
+    fallback = Path(default_workspace).resolve()
+    fallback.mkdir(parents=True, exist_ok=True)
+    return fallback
+
+
+def _resolve_relative_workspace_path(workspace_root: Path, relative_path: str) -> Path:
+    normalized = (relative_path or "").replace("\\", "/").strip()
+    if not normalized:
+        raise PathSecurityError("Path cannot be empty", relative_path)
+    path_obj = Path(normalized)
+    if path_obj.is_absolute():
+        raise PathSecurityError("Absolute paths are not allowed", relative_path)
+    if any(part == ".." for part in path_obj.parts):
+        raise PathSecurityError("Path traversal is not allowed", relative_path)
+    resolved = (workspace_root / path_obj).resolve()
+    try:
+        resolved.relative_to(workspace_root)
+    except ValueError as exc:
+        raise PathSecurityError("Path escapes workspace root", relative_path) from exc
+    return resolved
 
 
 class FilesTool(Tool):
@@ -706,5 +752,246 @@ class FilesTool(Tool):
             }
         )
 
+class _CanonicalFilesTool(Tool):
+    """Base class for canonical files.* tools."""
 
-__all__ = ["FilesTool"]
+    action_name: str = ""
+    required_fields: tuple[str, ...] = ()
+
+    def __init__(self, policy: Optional[ToolPolicy] = None, max_file_size: int = DEFAULT_MAX_FILE_SIZE):
+        super().__init__(policy=policy)
+        self.max_file_size = max_file_size
+
+    @property
+    def description(self) -> str:
+        return f"Canonical workspace file tool: {self.name}"
+
+    async def _validate_inputs(self, kwargs: Dict[str, Any]) -> None:
+        for field_name in self.required_fields:
+            value = kwargs.get(field_name)
+            if value is None:
+                raise ValueError(f"Missing required argument: {field_name}")
+            if isinstance(value, str) and not value.strip():
+                raise ValueError(f"Argument cannot be empty: {field_name}")
+
+
+class FilesWriteSubtool(_CanonicalFilesTool):
+    required_fields = ("path", "content")
+
+    @property
+    def name(self) -> str:
+        return "files.write"
+
+    @property
+    def json_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": "Write text content to a workspace-relative file.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "content": {"type": "string"},
+                        "encoding": {"type": "string", "default": "utf-8"},
+                    },
+                    "required": ["path", "content"],
+                },
+            },
+        }
+
+    async def execute(self, **kwargs: Any) -> ToolResult:
+        await self._validate_inputs(kwargs)
+        relative_path = str(kwargs.get("path", "")).strip()
+        content = kwargs.get("content", "")
+        if not isinstance(content, str):
+            content = str(content)
+        if not content:
+            return ToolResult.error("EMPTY_CONTENT", "Content cannot be empty")
+        payload_size = len(content.encode("utf-8"))
+        if payload_size > self.max_file_size:
+            return ToolResult.error(
+                "CONTENT_TOO_LARGE",
+                f"Content size ({payload_size}) exceeds max ({self.max_file_size})",
+            )
+        try:
+            workspace_root = _resolve_runtime_workspace()
+            target = _resolve_relative_workspace_path(workspace_root, relative_path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            async with aiofiles.open(target, "w", encoding=str(kwargs.get("encoding", "utf-8"))) as handle:
+                await handle.write(content)
+            digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+            created_at = datetime.utcnow().isoformat()
+            receipt = {
+                "path": relative_path.replace("\\", "/"),
+                "bytes": payload_size,
+                "sha256": digest,
+                "created_at": created_at,
+            }
+            return ToolResult.success(
+                content=f"Wrote {payload_size} bytes to {receipt['path']}",
+                metadata={
+                    "receipt": receipt,
+                    "audit": {
+                        "abs_path": str(target),
+                    },
+                },
+            )
+        except PathSecurityError as exc:
+            return ToolResult.error("PATH_SECURITY_ERROR", str(exc))
+        except Exception as exc:
+            return ToolResult.error("WRITE_ERROR", f"Failed to write file: {exc}")
+
+
+class FilesReadSubtool(_CanonicalFilesTool):
+    required_fields = ("path",)
+
+    @property
+    def name(self) -> str:
+        return "files.read"
+
+    @property
+    def json_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": "Read a workspace-relative text file.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                    },
+                    "required": ["path"],
+                },
+            },
+        }
+
+    async def execute(self, **kwargs: Any) -> ToolResult:
+        await self._validate_inputs(kwargs)
+        relative_path = str(kwargs.get("path", "")).strip()
+        try:
+            workspace_root = _resolve_runtime_workspace()
+            target = _resolve_relative_workspace_path(workspace_root, relative_path)
+            if not target.exists() or not target.is_file():
+                return ToolResult.error("NOT_FOUND", f"File not found: {relative_path}")
+            if target.stat().st_size > self.max_file_size:
+                return ToolResult.error("FILE_TOO_LARGE", "File exceeds max read size")
+            async with aiofiles.open(target, "r", encoding="utf-8") as handle:
+                content = await handle.read()
+            receipt = {
+                "path": relative_path.replace("\\", "/"),
+                "bytes": len(content.encode("utf-8")),
+                "content": content,
+            }
+            return ToolResult.success(content=content, metadata={"receipt": receipt})
+        except PathSecurityError as exc:
+            return ToolResult.error("PATH_SECURITY_ERROR", str(exc))
+        except Exception as exc:
+            return ToolResult.error("READ_ERROR", f"Failed to read file: {exc}")
+
+
+class FilesListSubtool(_CanonicalFilesTool):
+    @property
+    def name(self) -> str:
+        return "files.list"
+
+    @property
+    def json_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": "List files in a workspace-relative directory.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "dir": {"type": "string", "default": "."},
+                    },
+                    "required": [],
+                },
+            },
+        }
+
+    async def execute(self, **kwargs: Any) -> ToolResult:
+        relative_dir = str(kwargs.get("dir", ".")).strip() or "."
+        try:
+            workspace_root = _resolve_runtime_workspace()
+            target_dir = _resolve_relative_workspace_path(workspace_root, relative_dir)
+            if not target_dir.exists() or not target_dir.is_dir():
+                return ToolResult.error("NOT_FOUND", f"Directory not found: {relative_dir}")
+            items = []
+            for entry in sorted(target_dir.iterdir(), key=lambda i: (not i.is_dir(), i.name.lower())):
+                rel = str(entry.relative_to(workspace_root)).replace("\\", "/")
+                items.append(
+                    {
+                        "path": rel,
+                        "kind": "dir" if entry.is_dir() else "file",
+                    }
+                )
+            receipt = {
+                "dir": relative_dir.replace("\\", "/"),
+                "count": len(items),
+                "items": items[:200],
+                "truncated": len(items) > 200,
+            }
+            content = json.dumps(receipt, ensure_ascii=False)
+            return ToolResult.success(content=content, metadata={"receipt": receipt})
+        except PathSecurityError as exc:
+            return ToolResult.error("PATH_SECURITY_ERROR", str(exc))
+        except Exception as exc:
+            return ToolResult.error("LIST_ERROR", f"Failed to list directory: {exc}")
+
+
+class FilesExistsSubtool(_CanonicalFilesTool):
+    required_fields = ("path",)
+
+    @property
+    def name(self) -> str:
+        return "files.exists"
+
+    @property
+    def json_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": "Check if a workspace-relative path exists.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                    },
+                    "required": ["path"],
+                },
+            },
+        }
+
+    async def execute(self, **kwargs: Any) -> ToolResult:
+        await self._validate_inputs(kwargs)
+        relative_path = str(kwargs.get("path", "")).strip()
+        try:
+            workspace_root = _resolve_runtime_workspace()
+            target = _resolve_relative_workspace_path(workspace_root, relative_path)
+            exists = target.exists()
+            receipt = {
+                "path": relative_path.replace("\\", "/"),
+                "exists": exists,
+                "kind": "dir" if target.is_dir() else ("file" if target.is_file() else "missing"),
+            }
+            return ToolResult.success(content=json.dumps(receipt, ensure_ascii=False), metadata={"receipt": receipt})
+        except PathSecurityError as exc:
+            return ToolResult.error("PATH_SECURITY_ERROR", str(exc))
+        except Exception as exc:
+            return ToolResult.error("EXISTS_ERROR", f"Failed to check path: {exc}")
+
+
+__all__ = [
+    "FilesTool",
+    "FilesWriteSubtool",
+    "FilesReadSubtool",
+    "FilesListSubtool",
+    "FilesExistsSubtool",
+    "runtime_workspace_root",
+]

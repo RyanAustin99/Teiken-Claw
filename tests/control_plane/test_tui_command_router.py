@@ -46,3 +46,25 @@ def test_router_unknown_command_without_chat_raises(tmp_path):
 
     with pytest.raises(ValidationError):
         _run(router.execute("hello from ui"))
+
+
+def test_router_chat_receipts_command(tmp_path):
+    context = build_context(cli_data_dir=str(tmp_path / "cp_data"))
+    router = TuiCommandRouter(context)
+    hatch = _run(router.execute("hatch --name receipts-agent"))
+    assert "Started runtime and opened chat session" in hatch.output
+
+    async def _fake_chat(agent_id: str, session_id: str, message: str) -> str:
+        context.session_service.append_assistant_message(
+            session_id=session_id,
+            content='<TEIKEN_TOOL_RESULT>{"id":"tc_1","tool":"files.write","ok":true,"result":{"path":"hello.md","bytes":5}}</TEIKEN_TOOL_RESULT>',
+            tool_name="files.write",
+            tool_ok=True,
+            tool_elapsed_ms=10,
+        )
+        return "done"
+
+    context.runtime_supervisor.chat = _fake_chat
+    _run(router.execute("chat send write hello"))
+    receipts = _run(router.execute("chat receipts --limit 5"))
+    assert "[TOOL] files.write OK -> hello.md (5 bytes)" in receipts.output

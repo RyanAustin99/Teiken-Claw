@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 
-CURRENT_CONFIG_VERSION = 2
+CURRENT_CONFIG_VERSION = 3
 
 
 class ConfigStore:
@@ -52,5 +52,10 @@ class ConfigStore:
         if version < 2 and "agent_prompt_template_version" not in migrated:
             migrated["agent_prompt_template_version"] = "1.0.0"
             migrated["config_version"] = 2
+        if version < 3:
+            migrated.setdefault("max_tool_calls_per_message", 3)
+            migrated.setdefault("max_tool_turns_per_request", 8)
+            migrated.setdefault("tool_call_timeout_sec", 30)
+            migrated["config_version"] = 3
         return migrated
 

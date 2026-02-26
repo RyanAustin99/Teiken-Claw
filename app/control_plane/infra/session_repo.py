@@ -228,3 +228,16 @@ class SessionRepository:
             ).fetchall()
         return [self._row_to_message(row) for row in rows]
 
+    def list_tool_messages(self, session_id: str, limit: int = 20) -> List[SessionMessageRecord]:
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM agent_messages
+                WHERE session_id = ? AND tool_name IS NOT NULL
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (session_id, limit),
+            ).fetchall()
+        return [self._row_to_message(row) for row in rows]
+

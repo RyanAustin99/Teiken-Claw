@@ -109,6 +109,9 @@ Inside the TUI:
 Boot -> Dashboard / Setup Wizard -> Models / Agents / Hatch / Chat / Status / Doctor / Logs.
 5. Hatched agents are agent-contextual (not raw model passthrough): chat runs with per-agent prompt, workspace context, tool profile, and loaded skills summary.
 6. First chat interaction for a new agent performs onboarding questions, then transitions to normal task execution.
+7. Tool side effects are trust-checked:
+`<TEIKEN_TOOL_CALL>...</TEIKEN_TOOL_CALL>` is the only executable format, code fences are plain text.
+8. Runtime emits and stores tool receipts (`<TEIKEN_TOOL_RESULT>...`) and chat supports `/receipts` to inspect real execution results.
 
 ## Common Tasks
 
