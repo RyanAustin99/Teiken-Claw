@@ -100,7 +100,7 @@ Program outcome on 2026-02-25:
 - [x] Phase 11: Setup script streamlining (`teiken` launch, optional no-start/no-ui)
 - [x] Phase 12: Safety hardening and expanded audit coverage
 - [x] Phase 13: Full E2E gate automation
-- [x] Phase 14: 1.20.1 CI hotfix + multi-screen TUI shell/palette overhaul
+- [x] Phase 14: 1.20.1 CI hotfix + multi-screen TUI shell/palette overhaul (`772f0c5`, `74c29e1`, `3256973`, `e81f64b`)
 
 ### Validation Ledger (1.20 workstream)
 
