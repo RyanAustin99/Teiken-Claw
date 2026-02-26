@@ -44,3 +44,13 @@ def test_build_screen_is_lazy_and_does_not_construct_unrelated_routes(tmp_path, 
 
     screen = app._build_screen(Route.CHAT, agent_id="agent-1")
     assert isinstance(screen, DummyScreen)
+
+
+@pytest.mark.asyncio
+async def test_tui_run_test_boots_without_logger_collision(tmp_path):
+    context = build_context(cli_data_dir=str(tmp_path / "cp_data"))
+    app = TeikenControlPlaneApp(context=context)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.screen is not None

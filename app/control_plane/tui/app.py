@@ -69,7 +69,8 @@ class TeikenControlPlaneApp(App):
     def __init__(self, context: ControlPlaneContext) -> None:
         super().__init__()
         self.context = context
-        self._logger = logging.getLogger(__name__)
+        # Keep Textual's internal `_logger` untouched.
+        self._python_logger = logging.getLogger(__name__)
 
     def on_mount(self) -> None:
         self.push_screen(self._build_screen(Route.BOOT))
@@ -142,7 +143,7 @@ class TeikenControlPlaneApp(App):
 
     def on_error(self, event: events.Error) -> None:
         error = getattr(event, "error", RuntimeError("Unknown TUI error"))
-        self._logger.error(
+        self._python_logger.error(
             "Unhandled TUI error",
             exc_info=(type(error), error, getattr(error, "__traceback__", None)),
         )
