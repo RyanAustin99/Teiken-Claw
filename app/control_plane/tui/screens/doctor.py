@@ -8,6 +8,7 @@ from textual.widgets import Button, DataTable, Static
 
 from app.control_plane.tui.navigation import Route
 from app.control_plane.tui.screens.base import BaseControlScreen
+from app.control_plane.tui.uikit import sanitize_terminal_text
 
 
 class DoctorScreen(BaseControlScreen):
@@ -68,12 +69,17 @@ class DoctorScreen(BaseControlScreen):
             self._last_report_lines = [f"Doctor overall: {report.overall_status.value}"]
             self._last_fix_actions = []
             for check in report.checks:
-                icon = {"pass": "✅", "warn": "⚠️", "fail": "❌"}.get(check.status.value, "•")
+                icon = {"pass": "[OK]", "warn": "[WARN]", "fail": "[FAIL]"}.get(check.status.value, "[INFO]")
                 fix = check.fix_action or "-"
-                self.table.add_row(icon, check.name, check.summary, fix)
-                line = f"[{check.status.value}] {check.name}: {check.summary}"
+                self.table.add_row(
+                    icon,
+                    sanitize_terminal_text(check.name),
+                    sanitize_terminal_text(check.summary),
+                    sanitize_terminal_text(fix),
+                )
+                line = sanitize_terminal_text(f"[{check.status.value}] {check.name}: {check.summary}")
                 if check.suggestion:
-                    line += f" | fix: {check.suggestion}"
+                    line += sanitize_terminal_text(f" | fix: {check.suggestion}")
                 self._last_report_lines.append(line)
                 self._last_fix_actions.append(fix)
             self.summary.update(f"Doctor overall: {report.overall_status.value.upper()} ({len(report.checks)} checks)")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
@@ -17,10 +18,10 @@ class HealthState(str, Enum):
 
 
 HEALTH_STYLE = {
-    HealthState.HEALTHY: ("✅", "status-healthy"),
-    HealthState.DEGRADED: ("⚠️", "status-degraded"),
-    HealthState.FAILED: ("❌", "status-failed"),
-    HealthState.LOADING: ("⏳", "status-loading"),
+    HealthState.HEALTHY: ("[OK]", "status-healthy"),
+    HealthState.DEGRADED: ("[WARN]", "status-degraded"),
+    HealthState.FAILED: ("[FAIL]", "status-failed"),
+    HealthState.LOADING: ("[WAIT]", "status-loading"),
 }
 
 
@@ -40,6 +41,12 @@ def format_size(size_bytes: Optional[int]) -> str:
         size /= 1024.0
         unit += 1
     return f"{size:.1f} {units[unit]}"
+
+
+def sanitize_terminal_text(value: str) -> str:
+    """Best-effort text sanitization for non-UTF Windows shells."""
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    return value.encode(encoding, errors="replace").decode(encoding, errors="replace")
 
 
 @dataclass

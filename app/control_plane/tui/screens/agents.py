@@ -9,6 +9,7 @@ from textual.widgets import Button, DataTable, Input, Static
 from app.control_plane.domain.errors import ValidationError
 from app.control_plane.tui.navigation import Route
 from app.control_plane.tui.screens.base import BaseControlScreen
+from app.control_plane.tui.uikit import sanitize_terminal_text
 
 
 class AgentsScreen(BaseControlScreen):
@@ -50,22 +51,22 @@ class AgentsScreen(BaseControlScreen):
         self.table.clear()
         agents = self.context.agent_service.list_agents()
         status_icon = {
-            "running": "✅",
-            "degraded": "⚠️",
-            "crashed": "❌",
-            "starting": "⏳",
-            "stopping": "⏳",
-            "stopped": "•",
+            "running": "[OK]",
+            "degraded": "[WARN]",
+            "crashed": "[FAIL]",
+            "starting": "[WAIT]",
+            "stopping": "[WAIT]",
+            "stopped": "[IDLE]",
         }
         for agent in agents:
             last_error = (agent.last_error or "-")[:48]
             self.table.add_row(
-                agent.name,
-                f"{status_icon.get(agent.status.value, '•')} {agent.status.value}",
-                agent.model or "(default)",
-                agent.tool_profile,
-                agent.last_seen_at.isoformat() if agent.last_seen_at else "-",
-                last_error,
+                sanitize_terminal_text(agent.name),
+                sanitize_terminal_text(f"{status_icon.get(agent.status.value, '[IDLE]')} {agent.status.value}"),
+                sanitize_terminal_text(agent.model or "(default)"),
+                sanitize_terminal_text(agent.tool_profile),
+                sanitize_terminal_text(agent.last_seen_at.isoformat() if agent.last_seen_at else "-"),
+                sanitize_terminal_text(last_error),
             )
         self.hint.update(self._remediation_hint())
 

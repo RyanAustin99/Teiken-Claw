@@ -9,6 +9,7 @@ from textual.widgets import Button, Input, Select, Static
 from app.control_plane.domain.models import RunnerType
 from app.control_plane.tui.navigation import Route
 from app.control_plane.tui.screens.base import BaseControlScreen
+from app.control_plane.tui.uikit import sanitize_terminal_text
 
 
 class HatchScreen(BaseControlScreen):
@@ -98,12 +99,16 @@ class HatchScreen(BaseControlScreen):
                 details={"name": agent.name, "tool_profile": tool_profile, "session_id": session.id},
                 actor="tui",
             )
-            self.status_box.update(f"✅ Agent created + started: {agent.name}\nSession: {session.id}")
+            self.status_box.update(
+                sanitize_terminal_text(f"[OK] Agent created + started: {agent.name}\nSession: {session.id}")
+            )
             self.open_chat(agent_id=agent.id)
         except Exception as exc:
             self.show_error(exc)
             self.status_box.update(
-                "Hatch failed.\nUse recovery actions: Run Doctor, Go Models, Edit Agent, Retry Start."
+                sanitize_terminal_text(
+                    "Hatch failed.\nUse recovery actions: Run Doctor, Go Models, Edit Agent, Retry Start."
+                )
             )
 
     async def save_current(self) -> None:

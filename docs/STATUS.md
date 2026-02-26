@@ -119,6 +119,7 @@ Program outcome on 2026-02-25:
 | 2026-02-26 | `venv\\Scripts\\python.exe -m pytest -q tests/control_plane` | PASS | `14 passed` with multi-screen TUI + palette + service expansions |
 | 2026-02-26 | `powershell -ExecutionPolicy Bypass -File scripts/e2e_control_plane.ps1 -SkipOllamaDependent` | PASS (targeted) | CLI/control-plane lifecycle path remains green after TUI shell changes |
 | 2026-02-26 | `venv\\Scripts\\python.exe -m pytest -q` | PASS | `657 passed, 1 skipped` after hatch-route crash regression fix |
+| 2026-02-26 | `venv\\Scripts\\python.exe -m flake8 --select=E9,F63,F7 --show-source --statistics app/ tests/ scripts/` | PASS | CI lint gate adjusted to high-signal correctness checks |
 
 ### Phase 12/13 Closure Notes
 
@@ -138,3 +139,5 @@ Program outcome on 2026-02-25:
 5. Updated CI commands to use module execution and editable install for deterministic package resolution.
 6. Fixed hatch-to-chat crash path by making screen construction lazy in `TeikenControlPlaneApp._build_screen` (no eager construction of unrelated screens).
 7. Added regression coverage to enforce lazy screen construction during route transitions.
+8. Fixed Windows `cp1252` terminal crash path by removing non-ASCII status glyphs from TUI and normalizing status markers to ASCII-safe tokens (`[OK]`, `[WARN]`, `[FAIL]`, `[WAIT]`).
+9. Added `sanitize_terminal_text(...)` for dynamic TUI output safety and regression test coverage for ASCII-only TUI source literals.

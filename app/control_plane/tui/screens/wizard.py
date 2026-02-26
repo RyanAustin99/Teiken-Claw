@@ -9,6 +9,7 @@ from textual.widgets import Button, Input, Static
 from app.control_plane.domain.errors import ValidationError
 from app.control_plane.tui.navigation import Route
 from app.control_plane.tui.screens.base import BaseControlScreen
+from app.control_plane.tui.uikit import sanitize_terminal_text
 
 
 class SetupWizardScreen(BaseControlScreen):
@@ -94,7 +95,7 @@ class SetupWizardScreen(BaseControlScreen):
             base = self.data_dir_input.value.strip()
             if not base:
                 raise ValidationError("Data directory is required.")
-            self.step_status.update(f"✅ Data directory resolved: {base}")
+            self.step_status.update(sanitize_terminal_text(f"[OK] Data directory resolved: {base}"))
         except Exception as exc:
             self.show_error(exc)
 
@@ -105,8 +106,10 @@ class SetupWizardScreen(BaseControlScreen):
                 raise ValidationError("Ollama endpoint is required.")
             self.context.config_service.save_patch({"ollama_endpoint": endpoint})
             result = await self.context.model_service.detect_endpoint()
-            icon = "✅" if result["ok"] else "❌"
-            self.step_status.update(f"{icon} Ollama endpoint: {result['endpoint']} ({result['latency_ms']} ms)")
+            icon = "[OK]" if result["ok"] else "[FAIL]"
+            self.step_status.update(
+                sanitize_terminal_text(f"{icon} Ollama endpoint: {result['endpoint']} ({result['latency_ms']} ms)")
+            )
         except Exception as exc:
             self.show_error(exc)
 
@@ -115,11 +118,13 @@ class SetupWizardScreen(BaseControlScreen):
             models = await self.context.model_service.list_models()
             model = self.model_input.value.strip()
             if model and model in models:
-                self.step_status.update(f"✅ Default model is installed: {model}")
+                self.step_status.update(sanitize_terminal_text(f"[OK] Default model is installed: {model}"))
             elif models:
-                self.step_status.update(f"⚠️ Model {model} not found. Installed: {', '.join(models[:6])}")
+                self.step_status.update(
+                    sanitize_terminal_text(f"[WARN] Model {model} not found. Installed: {', '.join(models[:6])}")
+                )
             else:
-                self.step_status.update("⚠️ No models installed yet. Use Models screen to pull one.")
+                self.step_status.update("[WARN] No models installed yet. Use Models screen to pull one.")
         except Exception as exc:
             self.show_error(exc)
 
@@ -127,7 +132,7 @@ class SetupWizardScreen(BaseControlScreen):
         try:
             model = self.model_input.value.strip() or None
             result = await self.context.model_service.validate_model(model)
-            icon = "✅" if result["ok"] else "❌"
+            icon = "[OK]" if result["ok"] else "[FAIL]"
             self.step_status.update(f"{icon} Validation latency: {result['latency_ms']} ms")
         except Exception as exc:
             self.show_error(exc)
@@ -141,7 +146,7 @@ class SetupWizardScreen(BaseControlScreen):
                 "configured": True,
             }
             self.context.config_service.save_patch(patch)
-            self.step_status.update("✅ Setup complete. Next: hatch your first agent.")
+            self.step_status.update("[OK] Setup complete. Next: hatch your first agent.")
             self.jump(Route.HATCH)
         except Exception as exc:
             self.show_error(exc)

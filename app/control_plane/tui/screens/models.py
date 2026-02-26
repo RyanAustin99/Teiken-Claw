@@ -11,7 +11,7 @@ from textual.widgets import Button, DataTable, Input, RichLog, Static
 from app.control_plane.domain.errors import ValidationError
 from app.control_plane.tui.navigation import Route
 from app.control_plane.tui.screens.base import BaseControlScreen
-from app.control_plane.tui.uikit import format_size
+from app.control_plane.tui.uikit import format_size, sanitize_terminal_text
 
 
 class ModelsScreen(BaseControlScreen):
@@ -90,7 +90,7 @@ class ModelsScreen(BaseControlScreen):
         if event.button.id == "models-cancel-pull":
             if self._pull_task and not self._pull_task.done():
                 self._pull_task.cancel()
-                self.progress.write("⚠️ Pull cancelled.")
+                self.progress.write("[WARN] Pull cancelled.")
             return
         await super().on_button_pressed(event)
 
@@ -102,16 +102,19 @@ class ModelsScreen(BaseControlScreen):
         if not model:
             raise ValidationError("Enter or select a model name before pull.")
         self.progress.clear()
-        self.progress.write(f"⏳ Pulling model: {model}")
+        self.progress.write(sanitize_terminal_text(f"[WAIT] Pulling model: {model}"))
 
         async def _run_pull() -> None:
             try:
-                await self.context.model_service.pull_model(model_name=model, progress_cb=lambda msg: self.progress.write(msg))
-                self.progress.write("✅ Pull complete.")
+                await self.context.model_service.pull_model(
+                    model_name=model,
+                    progress_cb=lambda msg: self.progress.write(sanitize_terminal_text(msg)),
+                )
+                self.progress.write("[OK] Pull complete.")
                 self.progress.write("Tip: use Set Default to activate this model.")
                 await self.refresh_data()
             except asyncio.CancelledError:
-                self.progress.write("⚠️ Pull task cancelled.")
+                self.progress.write("[WARN] Pull task cancelled.")
             except Exception as exc:
                 self.show_error(exc)
 
@@ -121,8 +124,8 @@ class ModelsScreen(BaseControlScreen):
         model = self._selected_or_input_model()
         try:
             result = await self.context.model_service.validate_model(model)
-            self.progress.write(f"✅ Validation ok={result['ok']} latency={result['latency_ms']} ms")
-            self.progress.write(result.get("response_preview") or "<empty>")
+            self.progress.write(sanitize_terminal_text(f"[OK] Validation ok={result['ok']} latency={result['latency_ms']} ms"))
+            self.progress.write(sanitize_terminal_text(result.get("response_preview") or "<empty>"))
         except Exception as exc:
             self.show_error(exc)
 
@@ -132,7 +135,7 @@ class ModelsScreen(BaseControlScreen):
             raise ValidationError("Select a model first.")
         self.context.model_service.select_default_model(model)
         self.context.audit_service.log("model.select_default", target=model, details={}, actor="tui")
-        self.progress.write(f"✅ Default model set: {model}")
+        self.progress.write(sanitize_terminal_text(f"[OK] Default model set: {model}"))
         await self.refresh_data()
 
     async def _open_config_action(self) -> None:

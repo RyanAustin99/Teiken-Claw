@@ -12,6 +12,7 @@ from textual.widgets import Button, Input, RichLog, Static
 from app.control_plane.domain.errors import ValidationError
 from app.control_plane.tui.navigation import Route
 from app.control_plane.tui.screens.base import BaseControlScreen
+from app.control_plane.tui.uikit import sanitize_terminal_text
 
 
 class ChatScreen(BaseControlScreen):
@@ -49,7 +50,7 @@ class ChatScreen(BaseControlScreen):
         if self.initial_agent_id:
             self.agent_input.value = self.initial_agent_id
         self.message_input.focus()
-        self.transcript.write("Chat commands: /help /exit /new /status /model /tools /clear")
+        self.transcript.write(sanitize_terminal_text("Chat commands: /help /exit /new /status /model /tools /clear"))
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id != "chat-input":
@@ -93,9 +94,9 @@ class ChatScreen(BaseControlScreen):
             await self._start_chat_session(new=False)
         if not self.active_agent_id or not self.active_session_id:
             raise ValidationError("No active chat session.")
-        self.transcript.write(f"you> {text}")
+        self.transcript.write(sanitize_terminal_text(f"you> {text}"))
         start = time.perf_counter()
-        self.state_line.update("⏳ Agent is thinking...")
+        self.state_line.update("[WAIT] Agent is thinking...")
 
         async def _run_message() -> None:
             try:
@@ -105,11 +106,11 @@ class ChatScreen(BaseControlScreen):
                     message=text,
                 )
                 elapsed = (time.perf_counter() - start) * 1000
-                self.transcript.write(f"assistant> {response}")
-                self.state_line.update(f"✅ Responded in {elapsed:.0f} ms")
+                self.transcript.write(sanitize_terminal_text(f"assistant> {response}"))
+                self.state_line.update(f"[OK] Responded in {elapsed:.0f} ms")
             except Exception as exc:
                 self.show_error(exc)
-                self.state_line.update("⚠️ Message failed. Use Doctor/Config if issue persists.")
+                self.state_line.update("[WARN] Message failed. Use Doctor/Config if issue persists.")
 
         self._pending_task = asyncio.create_task(_run_message())
 
@@ -118,7 +119,7 @@ class ChatScreen(BaseControlScreen):
             self.jump(Route.DASHBOARD)
             return
         if command == "/help":
-            self.transcript.write("/help /exit /new /status /model /tools /clear")
+            self.transcript.write(sanitize_terminal_text("/help /exit /new /status /model /tools /clear"))
             return
         if command == "/new":
             await self._start_chat_session(new=True)
@@ -126,7 +127,9 @@ class ChatScreen(BaseControlScreen):
         if command == "/status":
             snapshot = await self.context.runtime_supervisor.snapshot_async()
             self.transcript.write(
-                f"status> runtimes={len(snapshot.runtimes)} inflight={snapshot.global_inflight_ollama}/{snapshot.max_inflight_ollama}"
+                sanitize_terminal_text(
+                    f"status> runtimes={len(snapshot.runtimes)} inflight={snapshot.global_inflight_ollama}/{snapshot.max_inflight_ollama}"
+                )
             )
             return
         if command == "/model":
@@ -135,19 +138,21 @@ class ChatScreen(BaseControlScreen):
             else:
                 agent = self.context.agent_service.get_agent(self.active_agent_id)
                 cfg = self.context.config_service.load().values
-                self.transcript.write(f"model> {agent.model if agent and agent.model else cfg.default_model}")
+                self.transcript.write(
+                    sanitize_terminal_text(f"model> {agent.model if agent and agent.model else cfg.default_model}")
+                )
             return
         if command == "/tools":
             if not self.active_agent_id:
                 self.transcript.write("tools> no active agent")
             else:
                 agent = self.context.agent_service.get_agent(self.active_agent_id)
-                self.transcript.write(f"tools> {agent.tool_profile if agent else 'safe'}")
+                self.transcript.write(sanitize_terminal_text(f"tools> {agent.tool_profile if agent else 'safe'}"))
             return
         if command == "/clear":
             self.transcript.clear()
             return
-        self.transcript.write(f"Unknown command: {command}")
+        self.transcript.write(sanitize_terminal_text(f"Unknown command: {command}"))
 
     async def _start_chat_session(self, new: bool) -> None:
         agent = self._resolve_agent()
@@ -159,7 +164,7 @@ class ChatScreen(BaseControlScreen):
             sessions = self.context.session_service.list_sessions(agent.id, limit=1)
             session = sessions[0] if sessions else self.context.session_service.new_session(agent.id, title=f"{agent.name} chat")
         self.active_session_id = session.id
-        self.state_line.update(f"Chat ready: {agent.name} ({session.id})")
+        self.state_line.update(sanitize_terminal_text(f"Chat ready: {agent.name} ({session.id})"))
         self._load_transcript()
 
     async def _resume_latest(self) -> None:
@@ -180,7 +185,7 @@ class ChatScreen(BaseControlScreen):
             return
         self.transcript.write("sessions>")
         for session in sessions:
-            self.transcript.write(f"- {session.id} ({session.updated_at.isoformat()})")
+            self.transcript.write(sanitize_terminal_text(f"- {session.id} ({session.updated_at.isoformat()})"))
 
     async def _rename_session(self) -> None:
         if not self.active_session_id:
@@ -188,7 +193,7 @@ class ChatScreen(BaseControlScreen):
             return
         new_title = f"session-{self.active_session_id[:8]}"
         self.context.session_service.rename_session(self.active_session_id, new_title)
-        self.transcript.write(f"rename> updated title to {new_title}")
+        self.transcript.write(sanitize_terminal_text(f"rename> updated title to {new_title}"))
 
     async def _delete_session(self) -> None:
         if not self.active_session_id:
@@ -206,8 +211,8 @@ class ChatScreen(BaseControlScreen):
             if item.tool_name:
                 outcome = "ok" if item.tool_ok else "fail"
                 elapsed = f" {item.tool_elapsed_ms}ms" if item.tool_elapsed_ms is not None else ""
-                self.transcript.write(f"[tool] {item.tool_name} {outcome}{elapsed}")
-            self.transcript.write(f"{item.role}> {item.content}")
+                self.transcript.write(sanitize_terminal_text(f"[tool] {item.tool_name} {outcome}{elapsed}"))
+            self.transcript.write(sanitize_terminal_text(f"{item.role}> {item.content}"))
 
     def _resolve_agent(self, optional: bool = False):
         ref = self.agent_input.value.strip()
