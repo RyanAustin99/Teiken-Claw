@@ -84,7 +84,10 @@ $state = Get-TeikenInstallerContext `
     -NoStart:$NoStart `
     -NoUi:$NoUi
 
-$launchAction = "run_dev"
+# Temporary stabilization: disable cinematic installer UI.
+$state.Mode = "PLAIN"
+
+$launchAction = "run_control_plane"
 $script:setupUnhandled = $null
 
 try {
@@ -394,10 +397,10 @@ try {
         New-StepResult -ExitCode 0 -Hint "ready"
     }
 
-    if (-not $state.Cancelled -and $state.ExitCode -eq 0) {
+    if (-not $state.Cancelled -and $state.ExitCode -eq 0 -and $state.Mode -eq "CINEMATIC") {
         $launchAction = Show-TeikenLaunchpad -State $state
-        if ($state.Mode -ne "CINEMATIC" -and -not $NoStart -and $launchAction -eq "quit") {
-            $launchAction = "run_dev"
+        if (-not $NoStart -and $launchAction -eq "quit") {
+            $launchAction = "run_control_plane"
         }
     }
 }
@@ -448,6 +451,17 @@ Write-Host ("Summary: {0}" -f $state.Artifacts.SummaryJsonPath) -ForegroundColor
 
 if (-not $NoStart) {
     switch ($launchAction) {
+        "run_control_plane" {
+            $pythonExe = Join-Path $projectRoot "venv\Scripts\python.exe"
+            if (Test-Path $pythonExe) {
+                $args = @("-m", "app.control_plane.entrypoint", "run")
+                if ($NoUi) {
+                    $args += "--no-ui"
+                }
+                & $pythonExe @args
+                exit $LASTEXITCODE
+            }
+        }
         "run_dev" {
             $runDev = Join-Path $projectRoot "scripts\run_dev.ps1"
             if (Test-Path $runDev) {

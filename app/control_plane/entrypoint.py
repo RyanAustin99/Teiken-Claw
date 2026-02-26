@@ -8,6 +8,7 @@ import platform
 import shutil
 import sys
 import time
+import traceback
 from pathlib import Path
 from typing import Optional
 
@@ -98,6 +99,14 @@ def _launch_tui(cp: ControlPlaneContext) -> None:
             "TUI dependencies missing. Install with `pip install -r requirements.txt` "
             f"(details: {exc})"
         )
+        raise typer.Exit(code=1)
+    except Exception as exc:
+        crash_path = cp.paths.logs_dir / "tui_crash.log"
+        crash_path.parent.mkdir(parents=True, exist_ok=True)
+        crash_path.write_text(traceback.format_exc(), encoding="utf-8")
+        console.print(f"[red]TUI failed to start:[/red] {exc}")
+        console.print(f"[yellow]Crash log:[/yellow] {crash_path}")
+        console.print("[dim]Fallback: run with --no-ui or use `teiken status`[/dim]")
         raise typer.Exit(code=1)
 
 
