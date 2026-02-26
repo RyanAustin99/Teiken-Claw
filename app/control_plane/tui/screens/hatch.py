@@ -1,0 +1,110 @@
+"""Agent hatch flow screen."""
+
+from __future__ import annotations
+
+from textual.app import ComposeResult
+from textual.containers import Horizontal
+from textual.widgets import Button, Input, Select, Static
+
+from app.control_plane.domain.models import RunnerType
+from app.control_plane.tui.navigation import Route
+from app.control_plane.tui.screens.base import BaseControlScreen
+
+
+class HatchScreen(BaseControlScreen):
+    ROUTE = Route.HATCH
+    SUBTITLE = "Create, configure, and start an agent runtime"
+    PRIMARY_ACTIONS = (("Hatch", "hatch-run"), ("Start Chat", "hatch-chat"))
+
+    def __init__(self, context):
+        super().__init__(context)
+        cfg = context.config_service.load().values
+        self.name_input = Input(placeholder="Name (required, unique)", id="hatch-name")
+        self.desc_input = Input(placeholder="Description", id="hatch-desc")
+        self.model_input = Input(value=cfg.default_model, placeholder="Model override (optional)", id="hatch-model")
+        self.workspace_input = Input(placeholder="Workspace path (optional)", id="hatch-workspace")
+        self.tool_profile = Select(
+            options=[("safe", "safe"), ("balanced", "balanced"), ("dangerous", "dangerous")],
+            value="safe",
+            id="hatch-tool-profile",
+        )
+        self.status_box = Static(classes="cp-card")
+        self.last_agent_id: str | None = None
+
+    def compose_body(self) -> ComposeResult:
+        yield self.name_input
+        yield self.desc_input
+        yield self.model_input
+        yield self.workspace_input
+        with Horizontal(classes="cp-row"):
+            yield Static("Tool profile:")
+            yield self.tool_profile
+        with Horizontal(classes="cp-row"):
+            yield Button("Run Doctor", id="hatch-doctor")
+            yield Button("Go Models", id="hatch-models")
+            yield Button("Retry Start", id="hatch-retry")
+            yield Button("Edit Agent", id="hatch-edit")
+        yield self.status_box
+
+    async def handle_primary_action(self, action_id: str) -> None:
+        if action_id == "hatch-run":
+            await self._hatch()
+        elif action_id == "hatch-chat":
+            if self.last_agent_id:
+                self.open_chat(agent_id=self.last_agent_id)
+            else:
+                self.status_box.update("No hatched agent yet.")
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        button_id = event.button.id or ""
+        if button_id == "hatch-doctor":
+            self.jump(Route.DOCTOR)
+            return
+        if button_id == "hatch-models":
+            self.jump(Route.MODELS)
+            return
+        if button_id == "hatch-edit":
+            self.jump(Route.AGENTS)
+            return
+        if button_id == "hatch-retry":
+            if self.last_agent_id:
+                await self.context.runtime_supervisor.restart_agent(self.last_agent_id)
+                self.status_box.update("Retry start complete.")
+            return
+        await super().on_button_pressed(event)
+
+    async def _hatch(self) -> None:
+        self.clear_error()
+        try:
+            name = self.name_input.value.strip()
+            if not name:
+                raise ValueError("Name is required.")
+            tool_profile = str(self.tool_profile.value)
+            agent = self.context.agent_service.create_agent(
+                name=name,
+                description=self.desc_input.value.strip() or None,
+                model=self.model_input.value.strip() or None,
+                workspace_path=self.workspace_input.value.strip() or None,
+                tool_profile=tool_profile,
+                runner_type=RunnerType.INPROCESS,
+                allow_dangerous_override=tool_profile == "dangerous",
+            )
+            self.last_agent_id = agent.id
+            await self.context.runtime_supervisor.start_agent(agent.id)
+            session = self.context.session_service.new_session(agent.id, title=f"{agent.name} session")
+            self.context.audit_service.log(
+                "agent.hatch",
+                target=agent.id,
+                details={"name": agent.name, "tool_profile": tool_profile, "session_id": session.id},
+                actor="tui",
+            )
+            self.status_box.update(f"✅ Agent created + started: {agent.name}\nSession: {session.id}")
+            self.open_chat(agent_id=agent.id)
+        except Exception as exc:
+            self.show_error(exc)
+            self.status_box.update(
+                "Hatch failed.\nUse recovery actions: Run Doctor, Go Models, Edit Agent, Retry Start."
+            )
+
+    async def save_current(self) -> None:
+        await self._hatch()

@@ -101,6 +101,26 @@ class SessionRepository:
             ).fetchall()
         return [self._row_to_session(row) for row in rows]
 
+    def rename_session(self, session_id: str, title: str) -> Optional[SessionRecord]:
+        now = _utcnow()
+        with closing(self._connect()) as conn:
+            conn.execute(
+                "UPDATE agent_sessions SET title = ?, updated_at = ? WHERE id = ?",
+                (title, now, session_id),
+            )
+            conn.commit()
+            row = conn.execute("SELECT * FROM agent_sessions WHERE id = ?", (session_id,)).fetchone()
+        if not row:
+            return None
+        return self._row_to_session(row)
+
+    def delete_session(self, session_id: str) -> bool:
+        with closing(self._connect()) as conn:
+            conn.execute("DELETE FROM agent_messages WHERE session_id = ?", (session_id,))
+            cursor = conn.execute("DELETE FROM agent_sessions WHERE id = ?", (session_id,))
+            conn.commit()
+        return cursor.rowcount > 0
+
     def append_message(
         self,
         session_id: str,

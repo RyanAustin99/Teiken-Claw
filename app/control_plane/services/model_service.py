@@ -45,6 +45,25 @@ class ModelService:
         models = await client.list_models()
         return [item.name for item in models]
 
+    async def list_models_detailed(self) -> List[Dict[str, Any]]:
+        """Return model metadata for richer TUI tables."""
+        client = self._client()
+        default_model = self.config_service.load().values.default_model
+        models = await client.list_models()
+        result: List[Dict[str, Any]] = []
+        for item in models:
+            result.append(
+                {
+                    "name": item.name,
+                    "size": item.size,
+                    "modified_at": item.modified_at,
+                    "digest": item.digest,
+                    "is_default": item.name == default_model,
+                    "installed": True,
+                }
+            )
+        return result
+
     async def pull_model(
         self,
         model_name: str,
