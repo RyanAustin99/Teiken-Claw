@@ -115,6 +115,11 @@ class ToolRegistry:
             if candidate.name == name:
                 return candidate
         return None
+
+    # Backward-compatible alias used by older startup/runtime call sites.
+    def get_tool(self, name: str) -> Optional[Tool]:
+        """Alias for get()."""
+        return self.get(name)
     
     def get_all(self) -> List[Tool]:
         """
@@ -124,6 +129,11 @@ class ToolRegistry:
             List of all Tool instances
         """
         return list(self._tools.values())
+
+    # Backward-compatible alias used by older startup/runtime call sites.
+    def list_tools(self) -> List[str]:
+        """Return registered tool names."""
+        return list(self._tools.keys())
     
     def get_all_schemas(self) -> List[Dict[str, Any]]:
         """
