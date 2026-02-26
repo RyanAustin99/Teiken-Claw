@@ -84,7 +84,7 @@ $state = Get-TeikenInstallerContext `
     -NoStart:$NoStart `
     -NoUi:$NoUi
 
-$launchAction = "quit"
+$launchAction = "run_dev"
 $script:setupUnhandled = $null
 
 try {
@@ -396,6 +396,9 @@ try {
 
     if (-not $state.Cancelled -and $state.ExitCode -eq 0) {
         $launchAction = Show-TeikenLaunchpad -State $state
+        if ($state.Mode -ne "CINEMATIC" -and -not $NoStart -and $launchAction -eq "quit") {
+            $launchAction = "run_dev"
+        }
     }
 }
 catch {

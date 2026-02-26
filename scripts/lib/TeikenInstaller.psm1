@@ -312,12 +312,6 @@ function Get-TeikenInstallerContext {
         'PLAIN'
     }
 
-    $psMajor = $PSVersionTable.PSVersion.Major
-    $forceCinematic = $env:TEIKEN_FORCE_CINEMATIC -eq '1'
-    if ($mode -eq 'CINEMATIC' -and $psMajor -lt 7 -and -not $forceCinematic) {
-        $mode = 'PLAIN'
-    }
-
     $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
 
     $installLogDir = Join-Path $ProjectRoot 'logs\install'
