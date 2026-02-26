@@ -40,6 +40,9 @@ Teiken Claw exposes HTTP endpoints via FastAPI.
 Top-level command interface:
 
 - `teiken`
+- `teiken-claw run`
+- `teiken-claw run --no-ui`
+- `teiken-claw doctor`
 - `teiken status`
 - `teiken doctor`
 - `teiken models`
@@ -76,3 +79,11 @@ Agent chat contract (control plane):
   - agent name confirmation/rename
   - primary purpose
 - Hatch/runtime start failure keeps agent record in `crashed` status with recovery actions (`doctor`, `models`, restart/edit).
+
+Install-time boot UX contract:
+
+- `teiken-claw run` uses Rich Live startup panels when TTY is available.
+- Non-TTY (or `--no-ui`) uses concise plain logs and still emits boot reports.
+- Boot report outputs:
+  - `./logs/boot/boot_report_*.json`
+  - `./logs/boot_report.json`

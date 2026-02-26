@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import os
+import platform
 import shutil
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -68,6 +70,37 @@ def _print_error(exc: ControlPlaneError) -> None:
         console.print(f"[dim]details: {exc.details}[/dim]")
 
 
+def _acquire_control_plane_lock(cp: ControlPlaneContext) -> None:
+    try:
+        cp.lock.acquire()
+        return
+    except SingleInstanceError:
+        console.print("[yellow]Control plane already running[/yellow]")
+
+    choice = typer.prompt("Choose action [exit|force unlock|open existing]", default="exit")
+    normalized = choice.strip().lower()
+    if normalized == "open existing":
+        console.print("Open existing session is planned. Use `teiken status` for now.")
+        raise typer.Exit(code=1)
+    if normalized != "force unlock":
+        raise typer.Exit(code=1)
+    cp.lock.acquire(force_unlock=True)
+
+
+def _launch_tui(cp: ControlPlaneContext) -> None:
+    try:
+        from app.control_plane.tui.app import TeikenControlPlaneApp
+
+        tui = TeikenControlPlaneApp(context=cp)
+        tui.run()
+    except ModuleNotFoundError as exc:
+        console.print(
+            "TUI dependencies missing. Install with `pip install -r requirements.txt` "
+            f"(details: {exc})"
+        )
+        raise typer.Exit(code=1)
+
+
 @app.callback(invoke_without_command=True)
 def main_callback(
     ctx: typer.Context,
@@ -78,28 +111,9 @@ def main_callback(
     if ctx.invoked_subcommand is None:
         cp = _ctx_data(ctx)
         try:
-            cp.lock.acquire()
-        except SingleInstanceError:
-            console.print("[yellow]Control plane already running[/yellow]")
-            choice = typer.prompt("Choose action [exit|force unlock|open existing]", default="exit")
-            normalized = choice.strip().lower()
-            if normalized == "open existing":
-                console.print("Open existing session is planned. Use `teiken status` for now.")
-                raise typer.Exit(code=1)
-            if normalized != "force unlock":
-                raise typer.Exit(code=1)
-            cp.lock.acquire(force_unlock=True)
-
-        try:
-            from app.control_plane.tui.app import TeikenControlPlaneApp
-
-            tui = TeikenControlPlaneApp(context=cp)
-            tui.run()
-        except ModuleNotFoundError as exc:
-            console.print(
-                "TUI dependencies missing. Install with `pip install -r requirements.txt` "
-                f"(details: {exc})"
-            )
+            _acquire_control_plane_lock(cp)
+            _launch_tui(cp)
+        except (SingleInstanceError, ValidationError):
             raise typer.Exit(code=1)
         finally:
             cp.lock.release()
@@ -143,6 +157,108 @@ def doctor_command(ctx: typer.Context, export: bool = typer.Option(False, "--exp
         lines.extend(f"[{check.status.value}] {check.name}: {check.summary}" for check in report.checks)
         cp.log_service.export(export_file, lines)
         console.print(f"Exported: {export_file}")
+
+
+@app.command("run")
+def run_command(
+    ctx: typer.Context,
+    no_ui: bool = typer.Option(False, "--no-ui", help="Run install bootstrap without launching the TUI."),
+) -> None:
+    from app.control_plane.install.agent_registry import InMemoryAgentRegistry
+    from app.control_plane.install.boot_report import BootReport, write_boot_report
+    from app.control_plane.install.live_boot import (
+        build_console,
+        build_startup_config,
+        is_tty,
+        now_utc_timestamp,
+        ports_and_urls,
+        redact_boot_config,
+        run_live_boot,
+        run_plain_boot,
+    )
+    from app.control_plane.install.runtime_snapshot import build_runtime_snapshot
+
+    cp = _ctx_data(ctx)
+    _acquire_control_plane_lock(cp)
+
+    report_exit_code = 0
+    entered_tui = False
+    started_server_here = False
+    started = time.monotonic()
+
+    try:
+        boot_console = build_console()
+        startup_cfg = build_startup_config(cp, version=__version__)
+        registry = InMemoryAgentRegistry()
+        runtime_view = build_runtime_snapshot(cp, registry)
+
+        use_live = is_tty() and not no_ui
+        if use_live:
+            boot_result = run_live_boot(
+                console=boot_console,
+                context=cp,
+                config=startup_cfg,
+                runtime_view=runtime_view,
+                registry=registry,
+            )
+        else:
+            boot_result = run_plain_boot(boot_console, context=cp, config=startup_cfg)
+
+        report_exit_code = 0 if boot_result.ok else 1
+        if boot_result.ok:
+            pre_status = cp.runtime_supervisor.server_process_manager.status()
+            cp.runtime_supervisor.start_dev_server()
+            post_status = cp.runtime_supervisor.server_process_manager.status()
+            if not pre_status.running and post_status.running:
+                started_server_here = True
+                console.print(f"[OK] Dev server started: {post_status.url}")
+            elif pre_status.running:
+                console.print(f"[OK] Dev server attached: {pre_status.url}")
+
+        if os.getenv("BOOT_REPORT", "1") not in ("0", "false", "False"):
+            report = BootReport(
+                ts_utc=now_utc_timestamp(),
+                duration_ms=int((time.monotonic() - started) * 1000),
+                app_name=startup_cfg.app_name,
+                version=startup_cfg.version,
+                environment=startup_cfg.environment,
+                git_sha=startup_cfg.git_sha,
+                python=sys.version.split()[0],
+                platform=f"{platform.system()} {platform.release()}",
+                config_redacted=redact_boot_config(startup_cfg),
+                ports_and_urls=ports_and_urls(startup_cfg),
+                ollama={
+                    "base_url": startup_cfg.ollama_base_url,
+                    "model": startup_cfg.ollama_model,
+                    "models_seen": boot_result.ollama_meta.get("models", []),
+                },
+                limits={
+                    "telegram_global_msg_per_sec": runtime_view.limits.telegram_global_msg_per_sec,
+                    "max_inflight_ollama_requests": runtime_view.limits.max_inflight_ollama_requests,
+                    "max_agent_queue_depth": runtime_view.limits.max_agent_queue_depth,
+                },
+                checks=boot_result.checks,
+                agents=[item.__dict__ for item in registry.snapshot()],
+                workers=runtime_view.workers,
+                exit_code=report_exit_code,
+            )
+            report_dir = os.getenv("BOOT_REPORT_DIR", "./logs/boot")
+            latest_path = os.getenv("BOOT_REPORT_LATEST", "./logs/boot_report.json")
+            report_path = write_boot_report(report, report_dir=report_dir, latest_path=latest_path)
+            console.print(f"[muted]Boot report:[/muted] {report_path}")
+
+        if report_exit_code != 0:
+            raise typer.Exit(code=report_exit_code)
+
+        if use_live:
+            entered_tui = True
+            _launch_tui(cp)
+        else:
+            console.print("[OK] run completed (no-ui/plain mode)")
+    finally:
+        if entered_tui and started_server_here:
+            _run_async(cp.runtime_supervisor.shutdown_gracefully())
+        cp.lock.release()
 
 
 @models_app.command("list")

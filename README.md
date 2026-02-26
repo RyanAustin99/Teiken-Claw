@@ -12,6 +12,9 @@ No manual config editing is required for standard onboarding.
 Main command surface:
 
 - `teiken` (launch dashboard TUI)
+- `teiken-claw run` (install/start boot flow: checks + server + TUI)
+- `teiken-claw run --no-ui` (plain boot checks + server attach/start, no TUI)
+- `teiken-claw doctor`
 - `teiken status`
 - `teiken doctor`
 - `teiken models`
@@ -66,8 +69,28 @@ Default setup behavior:
 
 1. Creates/updates virtual environment
 2. Installs dependencies and editable package entrypoint (`teiken`)
-3. Starts dev server (unless `-NoStart`)
-4. Launches terminal control plane (unless `-NoUi`)
+3. Runs install-time boot UX (`teiken-claw run`) unless `-NoStart`
+4. Uses plain mode (`--no-ui`) if `-NoUi` is provided
+
+Boot reports are written to:
+
+- Timestamped: `./logs/boot/boot_report_*.json`
+- Latest pointer: `./logs/boot_report.json`
+
+Recommended environment overrides:
+
+```powershell
+$env:TEIKEN_ENV=\"local\"
+$env:OLLAMA_BASE_URL=\"http://127.0.0.1:11434\"
+$env:OLLAMA_MODEL=\"qwen2.5:7b\"
+$env:OLLAMA_WARMUP=\"1\"
+$env:TEIKEN_API_HOST=\"0.0.0.0\"
+$env:TEIKEN_API_PORT=\"8000\"
+$env:TEIKEN_DASHBOARD_PORT=\"5173\"
+$env:TEIKEN_PUBLIC_BASE_URL=\"http://127.0.0.1:8000\"
+$env:BOOT_REPORT_DIR=\"./logs/boot\"
+$env:BOOT_REPORT=\"1\"
+```
 
 ### Manual Commands
 

@@ -41,6 +41,20 @@ Use `teiken config` or TUI Config screen to set:
 Preferred UX path is the Setup Wizard screen (Step 1..6) launched on first run,
 with `Ctrl+S` save behavior on editable screens.
 
+## Install-Time Boot UX Variables
+
+The install/start bootstrap path (`teiken-claw run`) supports:
+
+- `TEIKEN_ENV` (default: `local`)
+- `GIT_SHA` (optional metadata in boot report)
+- `OLLAMA_WARMUP` (`1`/`0`)
+- `STRICT_MODEL_CHECK` (`1`/`0`; default warn/continue for missing model)
+- `TEIKEN_DASHBOARD_PORT` (default: `5173`)
+- `TEIKEN_PUBLIC_BASE_URL` (optional URL override for port/footer panels)
+- `BOOT_REPORT` (`1`/`0`; default enabled)
+- `BOOT_REPORT_DIR` (default: `./logs/boot`)
+- `BOOT_REPORT_LATEST` (default: `./logs/boot_report.json`)
+
 Example:
 
 ```powershell

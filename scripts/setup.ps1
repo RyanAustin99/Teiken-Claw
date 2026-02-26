@@ -274,24 +274,49 @@ Write-Host "Logs Path:   $env:LOCALAPPDATA\TeikenClaw\logs" -ForegroundColor Gra
 Write-Host ""
 
 if (-not $NoStart) {
-    Write-Step "Starting development server in a new shell..."
-    $RunDevScript = Join-Path $ProjectRoot "scripts\run_dev.ps1"
-    if (Test-Path $RunDevScript) {
-        Start-Process powershell -ArgumentList "-ExecutionPolicy Bypass -File `"$RunDevScript`"" -WorkingDirectory $ProjectRoot | Out-Null
-        Write-Success "Development server launch requested"
+    $ApiHost = if ($env:TEIKEN_API_HOST) { $env:TEIKEN_API_HOST } else { "127.0.0.1" }
+    if ($ApiHost -eq "0.0.0.0") { $ApiHost = "127.0.0.1" }
+    $ApiPort = if ($env:TEIKEN_API_PORT) { $env:TEIKEN_API_PORT } else { "8000" }
+    $DashPort = if ($env:TEIKEN_DASHBOARD_PORT) { $env:TEIKEN_DASHBOARD_PORT } else { "5173" }
+    $PublicBase = if ($env:TEIKEN_PUBLIC_BASE_URL) { $env:TEIKEN_PUBLIC_BASE_URL } else { "http://$ApiHost`:$ApiPort" }
+
+    Write-Host "Runtime URLs:" -ForegroundColor White
+    Write-Host "  API:       http://$ApiHost`:$ApiPort" -ForegroundColor Gray
+    Write-Host "  Dashboard: http://$ApiHost`:$DashPort" -ForegroundColor Gray
+    Write-Host "  Public:    $PublicBase" -ForegroundColor Gray
+    Write-Host ""
+
+    Write-Step "Launching install-time boot experience..."
+    $TeikenClawExe = Join-Path $VenvPath "Scripts\teiken-claw.exe"
+    $TeikenExe = Join-Path $VenvPath "Scripts\teiken.exe"
+
+    if (Test-Path $TeikenClawExe) {
+        if ($NoUi) {
+            & $TeikenClawExe run --no-ui
+        } else {
+            & $TeikenClawExe run
+        }
+    } elseif (Test-Path $TeikenExe) {
+        if ($NoUi) {
+            & $TeikenExe run --no-ui
+        } else {
+            & $TeikenExe run
+        }
     } else {
-        Write-Warn "run_dev.ps1 not found; skipping server start"
+        Write-Warn "teiken-claw entrypoint not found; using python module fallback"
+        if ($NoUi) {
+            & $PythonVenv -m app.control_plane.entrypoint run --no-ui
+        } else {
+            & $PythonVenv -m app.control_plane.entrypoint run
+        }
     }
 } else {
-    Write-Info "Skipping dev server start (--NoStart)"
-}
-
-if (-not $NoUi) {
-    Write-Step "Launching Teiken control plane..."
-    & $PythonVenv -m app.control_plane.entrypoint
-} else {
-    Write-Info "Skipping terminal UI launch (--NoUi)"
-    Write-Host "Run later: teiken" -ForegroundColor Gray
+    Write-Info "Skipping runtime launch (--NoStart)"
+    if ($NoUi) {
+        Write-Host "Run later: teiken-claw run --no-ui" -ForegroundColor Gray
+    } else {
+        Write-Host "Run later: teiken-claw run" -ForegroundColor Gray
+    }
 }
 
 Write-Host ""

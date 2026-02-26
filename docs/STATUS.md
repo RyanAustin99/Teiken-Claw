@@ -1,6 +1,6 @@
 # Project Status
 
-## Current Version: 1.20.2
+## Current Version: 1.20.3
 ## Last Updated: 2026-02-26
 ## Current Track: Terminal-First Control Plane
 
@@ -102,6 +102,7 @@ Program outcome on 2026-02-25:
 - [x] Phase 13: Full E2E gate automation
 - [x] Phase 14: 1.20.1 CI hotfix + multi-screen TUI shell/palette overhaul (`772f0c5`, `74c29e1`, `3256973`, `e81f64b`)
 - [x] Phase 15: 1.20.2 hatch crash recovery + agent-contextual chat runtime (this update)
+- [x] Phase 16: 1.20.3 install-time dynamic boot UI + `teiken-claw run` flow
 
 ### Validation Ledger (1.20 workstream)
 
@@ -125,6 +126,10 @@ Program outcome on 2026-02-25:
 | 2026-02-26 | `venv\\Scripts\\python.exe -m pytest -q tests/test_app.py tests/test_telegram.py tests/test_throttles_import.py` | PASS | Import/runtime regressions remained green after control-plane runtime pivot |
 | 2026-02-26 | `venv\\Scripts\\python.exe -m pytest -q` | PASS | `664 passed, 1 skipped` with full-suite validation for 1.20.2 |
 | 2026-02-26 | `venv\\Scripts\\python.exe -m compileall -q app tests scripts` | PASS | Syntax gate for CI/lint parity |
+| 2026-02-26 | `venv\\Scripts\\python.exe -m pytest -q tests/control_plane/test_install_boot.py` | PASS | New install-boot modules + `run --no-ui` report path coverage |
+| 2026-02-26 | `venv\\Scripts\\python.exe -m pytest -q tests/control_plane` | PASS | `27 passed` after 1.20.3 install-time boot additions |
+| 2026-02-26 | `venv\\Scripts\\python.exe -m flake8 --select=E9,F63,F7 --show-source --statistics app/ tests/ scripts/` | PASS | No syntax/runtime-lint blockers |
+| 2026-02-26 | `venv\\Scripts\\python.exe -m pytest -q` | PASS | `669 passed, 1 skipped` after 1.20.3 implementation |
 
 ### Phase 12/13 Closure Notes
 
@@ -161,3 +166,24 @@ Program outcome on 2026-02-25:
    - onboarding state machine and prompt composition
    - hatch failure to `crashed` + idempotent retry
    - chat path enforcement of conversation service (no direct fallback)
+
+### 1.20.3 Install-Time Dynamic Boot Notes
+
+1. Added `teiken-claw` console-script alias while keeping `teiken` as canonical.
+2. Added `teiken run` / `teiken-claw run` command:
+   - TTY mode: Rich Live startup panels + model checks + server attach/start + TUI launch.
+   - Non-TTY or `--no-ui`: concise plain boot logs + server attach/start without Textual launch.
+3. Added install boot modules under `app/control_plane/install/`:
+   - `agent_registry.py`
+   - `runtime_snapshot.py`
+   - `live_boot.py`
+   - `boot_report.py`
+4. Added boot report outputs:
+   - timestamped report in `./logs/boot/boot_report_*.json`
+   - latest pointer in `./logs/boot_report.json`
+5. Setup script now launches install/start flow via `teiken-claw run` (or fallback to module invocation), honoring `-NoStart` and `-NoUi`.
+6. Added guardrail visibility for install boot panel/report:
+   - Telegram global msg/sec (30 default baseline)
+   - max inflight Ollama requests
+   - max agent queue depth
+7. Model presence default policy is warn/continue; strict fail mode available via `STRICT_MODEL_CHECK=1`.
