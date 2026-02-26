@@ -37,6 +37,9 @@ Use `teiken config` or TUI Config screen to set:
 - Safety toggles
 - Data directory (advanced)
 
+Preferred UX path is the Setup Wizard screen (Step 1..6) launched on first run,
+with `Ctrl+S` save behavior on editable screens.
+
 Example:
 
 ```powershell

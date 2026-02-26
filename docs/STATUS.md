@@ -100,6 +100,7 @@ Program outcome on 2026-02-25:
 - [x] Phase 11: Setup script streamlining (`teiken` launch, optional no-start/no-ui)
 - [x] Phase 12: Safety hardening and expanded audit coverage
 - [x] Phase 13: Full E2E gate automation
+- [x] Phase 14: 1.20.1 CI hotfix + multi-screen TUI shell/palette overhaul
 
 ### Validation Ledger (1.20 workstream)
 
@@ -110,10 +111,13 @@ Program outcome on 2026-02-25:
 | 2026-02-26 | `python -m app.control_plane.entrypoint --data-dir ./.tmp_teiken status` | PASS | Status executes without FastAPI dependency |
 | 2026-02-26 | `python -m pytest -q tests/control_plane tests/test_app.py` | PASS | Includes new audit, profile guard, and e2e programmatic flow tests |
 | 2026-02-26 | `powershell -ExecutionPolicy Bypass -File scripts/e2e_control_plane.ps1 -SkipOllamaDependent` | PASS (targeted) | Added scripted E2E gate path for CI and local validation |
-| 2026-02-26 | `python -m pytest -q` | PASS | `649 passed, 1 skipped` |
+| 2026-02-26 | `python -m pytest -q` | PASS | `656 passed, 1 skipped` after 1.20.1 UI/test additions |
 | 2026-02-26 | `powershell -ExecutionPolicy Bypass -File scripts/smoke_test.ps1` | PASS | `Failed: 0` (one non-critical warning when API server is not running) |
 | 2026-02-26 | `python -m pytest -q tests/control_plane` | PASS | `11 passed` after TUI command-bar routing integration |
 | 2026-02-26 | `python -m app.control_plane.entrypoint --data-dir ./.tmp_teiken_ui status` | PASS | CLI remained stable after TUI command-router changes |
+| 2026-02-26 | `venv\\Scripts\\python.exe -m pytest -q tests/test_app.py tests/test_throttles_import.py` | PASS | CI blocker fixed: no `Limiter` NameError when `aiolimiter` is unavailable |
+| 2026-02-26 | `venv\\Scripts\\python.exe -m pytest -q tests/control_plane` | PASS | `14 passed` with multi-screen TUI + palette + service expansions |
+| 2026-02-26 | `powershell -ExecutionPolicy Bypass -File scripts/e2e_control_plane.ps1 -SkipOllamaDependent` | PASS (targeted) | CLI/control-plane lifecycle path remains green after TUI shell changes |
 
 ### Phase 12/13 Closure Notes
 
@@ -122,3 +126,4 @@ Program outcome on 2026-02-25:
 3. Added `--details` error mode for actionable failure introspection.
 4. Added CI workflow gate for control-plane tests and E2E smoke: `.github/workflows/control-plane-ci.yml`.
 5. Integrated in-TUI command bar with direct `teiken` command parsing, `Ctrl+P/Ctrl+K` focus, and chat-mode input fallback.
+6. Replaced single-screen TUI with routed multi-screen shell, shared theme/UI kit, global key contract, and grouped fuzzy command palette.

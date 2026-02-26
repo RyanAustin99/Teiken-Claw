@@ -77,10 +77,12 @@ teiken
 
 Inside the TUI:
 
-1. Type commands directly in the command bar (for example `teiken status`, `agents list`, `hatch --name claw`).
-2. Press `Enter` to execute.
-3. Use `Ctrl+P` or `Ctrl+K` to focus the command bar.
-4. After `chat start <agent>`, plain text is sent as chat messages.
+1. Use clear screen-specific action buttons (for example Pull Model, Validate, Hatch, Start/Stop/Restart).
+2. Use `Ctrl+K` for the global command palette (fuzzy search + grouped commands).
+3. Use global keys consistently:
+`F1` Help, `Esc` Back, `Ctrl+R` Refresh, `Ctrl+L` Logs, `Ctrl+S` Save, `Ctrl+C` Quit.
+4. Screen map:
+Boot -> Dashboard / Setup Wizard -> Models / Agents / Hatch / Chat / Status / Doctor / Logs.
 
 ## Common Tasks
 
