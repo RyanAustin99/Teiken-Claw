@@ -1,6 +1,8 @@
 ﻿Set-StrictMode -Version Latest
 
 $script:ESC = [char]27
+$script:CSI = "$script:ESC["
+$script:TeikenVtEnabled = $false
 $script:TeikenUiStarted = $false
 $script:TeikenCancelHandler = $null
 $script:TeikenPrevCtrlCAsInput = $false
@@ -11,7 +13,69 @@ if (Test-Path $brandingScript) {
     . $brandingScript
 }
 
-function Test-TeikenAnsiSupport {
+function Strip-Ansi {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Text
+    )
+
+    return [regex]::Replace($Text, "\x1b\[[0-9;?]*[ -/]*[@-~]", '')
+}
+
+function Enable-VirtualTerminal {
+    try {
+        $isWindowsHost = ($env:OS -like '*Windows*')
+        if (-not $isWindowsHost) {
+            $script:TeikenVtEnabled = $true
+            return $true
+        }
+
+        Add-Type -Namespace TeikenInstaller -Name Win32 -MemberDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class Win32 {
+  public const int STD_OUTPUT_HANDLE = -11;
+  public const uint ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004;
+  public const uint DISABLE_NEWLINE_AUTO_RETURN = 0x0008;
+  [DllImport("kernel32.dll", SetLastError=true)]
+  public static extern IntPtr GetStdHandle(int nStdHandle);
+  [DllImport("kernel32.dll", SetLastError=true)]
+  public static extern bool GetConsoleMode(IntPtr hConsoleHandle, out uint lpMode);
+  [DllImport("kernel32.dll", SetLastError=true)]
+  public static extern bool SetConsoleMode(IntPtr hConsoleHandle, uint dwMode);
+}
+"@ -ErrorAction SilentlyContinue
+
+        $h = [TeikenInstaller.Win32]::GetStdHandle([TeikenInstaller.Win32]::STD_OUTPUT_HANDLE)
+        if ($h -eq [IntPtr]::Zero) { return $false }
+
+        $mode = 0
+        if (-not [TeikenInstaller.Win32]::GetConsoleMode($h, [ref]$mode)) { return $false }
+
+        $newMode = $mode -bor [TeikenInstaller.Win32]::ENABLE_VIRTUAL_TERMINAL_PROCESSING
+        $newMode = $newMode -bor [TeikenInstaller.Win32]::DISABLE_NEWLINE_AUTO_RETURN
+        $ok = [TeikenInstaller.Win32]::SetConsoleMode($h, $newMode)
+        if ($ok) {
+            $script:TeikenVtEnabled = $true
+            return $true
+        }
+    } catch {
+    }
+
+    return $false
+}
+
+function Initialize-TeikenConsole {
+    try {
+        [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+        $global:OutputEncoding = [Console]::OutputEncoding
+    } catch {
+    }
+
+    [void](Enable-VirtualTerminal)
+}
+
+function Get-TeikenAnsiSupport {
     param(
         [switch]$NoAnsi,
         [switch]$CI
@@ -22,17 +86,33 @@ function Test-TeikenAnsiSupport {
     }
 
     try {
+        if ([Console]::IsOutputRedirected) { return $false }
+    } catch {
+        return $false
+    }
+
+    if ($env:WT_SESSION) { return $true }
+    if ($script:TeikenVtEnabled) { return $true }
+
+    try {
         if ($Host -and $Host.UI -and $Host.UI.SupportsVirtualTerminal) {
             return $true
         }
     } catch {
     }
 
-    if ($env:WT_SESSION) { return $true }
     if ($env:TERM -and $env:TERM -ne 'dumb') { return $true }
     return $false
 }
 
+function Test-TeikenAnsiSupport {
+    param(
+        [switch]$NoAnsi,
+        [switch]$CI
+    )
+
+    return Get-TeikenAnsiSupport -NoAnsi:$NoAnsi -CI:$CI
+}
 function Test-TeikenTrueColorSupport {
     param(
         [bool]$AnsiEnabled
@@ -50,7 +130,7 @@ function Get-TeikenVisibleLength {
     )
 
     if (-not $Text) { return 0 }
-    $plain = [regex]::Replace($Text, "`e\[[0-9;]*m", '')
+    $plain = Strip-Ansi -Text $Text
     return $plain.Length
 }
 
@@ -95,28 +175,28 @@ function Get-TeikenTheme {
         }
     }
 
-    $reset = "${script:ESC}[0m"
-    $bold = "${script:ESC}[1m"
-    $dim = "${script:ESC}[2m"
+    $reset = "${script:CSI}0m"
+    $bold = "${script:CSI}1m"
+    $dim = "${script:CSI}2m"
 
     if ($State.TerminalCaps.TrueColor) {
         return [ordered]@{
             Reset = $reset
             Bold = $bold
             Dim = $dim
-            Teal = "${script:ESC}[38;2;0;209;178m"
-            TealBright = "${script:ESC}[38;2;36;235;208m"
-            TealInvert = "${script:ESC}[97;48;2;0;209;178m"
-            Orange = "${script:ESC}[38;2;255;122;24m"
-            OrangeBright = "${script:ESC}[38;2;255;162;92m"
-            OrangeInvert = "${script:ESC}[97;48;2;255;122;24m"
-            Muted = "${script:ESC}[38;2;138;143;152m"
-            Success = "${script:ESC}[32m"
-            Warn = "${script:ESC}[33m"
-            Error = "${script:ESC}[31m"
-            Border = "${script:ESC}[38;2;0;209;178m"
-            BorderError = "${script:ESC}[31m"
-            Status = "${script:ESC}[38;2;11;15;20m"
+            Teal = "${script:CSI}38;2;0;209;178m"
+            TealBright = "${script:CSI}38;2;36;235;208m"
+            TealInvert = "${script:CSI}97;48;2;0;209;178m"
+            Orange = "${script:CSI}38;2;255;122;24m"
+            OrangeBright = "${script:CSI}38;2;255;162;92m"
+            OrangeInvert = "${script:CSI}97;48;2;255;122;24m"
+            Muted = "${script:CSI}38;2;138;143;152m"
+            Success = "${script:CSI}32m"
+            Warn = "${script:CSI}33m"
+            Error = "${script:CSI}31m"
+            Border = "${script:CSI}38;2;0;209;178m"
+            BorderError = "${script:CSI}31m"
+            Status = "${script:CSI}38;2;11;15;20m"
         }
     }
 
@@ -124,19 +204,19 @@ function Get-TeikenTheme {
         Reset = $reset
         Bold = $bold
         Dim = $dim
-        Teal = "${script:ESC}[36m"
-        TealBright = "${script:ESC}[96m"
-        TealInvert = "${script:ESC}[97;46m"
-        Orange = "${script:ESC}[33m"
-        OrangeBright = "${script:ESC}[93m"
-        OrangeInvert = "${script:ESC}[97;43m"
-        Muted = "${script:ESC}[90m"
-        Success = "${script:ESC}[32m"
-        Warn = "${script:ESC}[33m"
-        Error = "${script:ESC}[31m"
-        Border = "${script:ESC}[36m"
-        BorderError = "${script:ESC}[31m"
-        Status = "${script:ESC}[30m"
+        Teal = "${script:CSI}36m"
+        TealBright = "${script:CSI}96m"
+        TealInvert = "${script:CSI}97;46m"
+        Orange = "${script:CSI}33m"
+        OrangeBright = "${script:CSI}93m"
+        OrangeInvert = "${script:CSI}97;43m"
+        Muted = "${script:CSI}90m"
+        Success = "${script:CSI}32m"
+        Warn = "${script:CSI}33m"
+        Error = "${script:CSI}31m"
+        Border = "${script:CSI}36m"
+        BorderError = "${script:CSI}31m"
+        Status = "${script:CSI}30m"
     }
 }
 
@@ -212,6 +292,8 @@ function Get-TeikenInstallerContext {
         [switch]$NoUi
     )
 
+    Initialize-TeikenConsole
+
     $interactive = $true
     try {
         $interactive = -not [Console]::IsOutputRedirected
@@ -219,7 +301,7 @@ function Get-TeikenInstallerContext {
         $interactive = $false
     }
 
-    $ansi = Test-TeikenAnsiSupport -NoAnsi:$NoAnsi -CI:$CI
+    $ansi = Get-TeikenAnsiSupport -NoAnsi:$NoAnsi -CI:$CI
     $trueColor = Test-TeikenTrueColorSupport -AnsiEnabled:$ansi
 
     $mode = if ($CI) {
@@ -228,6 +310,12 @@ function Get-TeikenInstallerContext {
         'CINEMATIC'
     } else {
         'PLAIN'
+    }
+
+    $psMajor = $PSVersionTable.PSVersion.Major
+    $forceCinematic = $env:TEIKEN_FORCE_CINEMATIC -eq '1'
+    if ($mode -eq 'CINEMATIC' -and $psMajor -lt 7 -and -not $forceCinematic) {
+        $mode = 'PLAIN'
     }
 
     $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
@@ -272,6 +360,13 @@ function Get-TeikenInstallerContext {
 
     $termWidth = if ($interactive) { [Console]::WindowWidth } else { 120 }
     $termHeight = if ($interactive) { [Console]::WindowHeight } else { 40 }
+    $unicodeSupported = $false
+    try {
+        $encodingName = [Console]::OutputEncoding.WebName
+        $unicodeSupported = $encodingName -match 'utf'
+    } catch {
+        $unicodeSupported = $false
+    }
     $shellLabel = if ($PSVersionTable.PSVersion.Major -ge 7) { "PowerShell $($PSVersionTable.PSVersion)" } else { "Windows PowerShell $($PSVersionTable.PSVersion)" }
 
     $state = [pscustomobject]@{
@@ -291,6 +386,7 @@ function Get-TeikenInstallerContext {
             Height = $termHeight
             Shell = $shellLabel
             PsVersion = $PSVersionTable.PSVersion.ToString()
+            Unicode = $unicodeSupported
         }
         Theme = $null
         Flags = [pscustomobject]@{
@@ -369,17 +465,22 @@ function Get-TeikenStatusTicker {
         [pscustomobject]$State
     )
 
+    $okGlyph = if ($State.TerminalCaps.Unicode) { '✓' } else { 'OK' }
+    $failGlyph = if ($State.TerminalCaps.Unicode) { '✗' } else { 'X' }
+    $pulseA = if ($State.TerminalCaps.Unicode) { '•' } else { '.' }
+    $pulseB = if ($State.TerminalCaps.Unicode) { '·' } else { '.' }
+
     if ($State.ExitCode -ne 0) {
-        return Format-TeikenText -State $State -Text '✗' -Style 'Error'
+        return Format-TeikenText -State $State -Text $failGlyph -Style 'Error'
     }
 
     $allDone = -not ($State.Steps | Where-Object { $_.Status -eq 'running' })
     if ($allDone -and @($State.Steps | Where-Object { $_.Status -eq 'ok' -or $_.Status -eq 'warn' -or $_.Status -eq 'skipped' }).Count -ge 11) {
-        return Format-TeikenText -State $State -Text '✓' -Style 'Success'
+        return Format-TeikenText -State $State -Text $okGlyph -Style 'Success'
     }
 
-    if ($State.Ui.Frame % 4 -lt 2) { return '•' }
-    return '·'
+    if ($State.Ui.Frame % 4 -lt 2) { return $pulseA }
+    return $pulseB
 }
 
 function Get-TeikenStyledTopBorder {
@@ -512,7 +613,7 @@ function New-TeikenPanel {
     foreach ($line in $Lines) {
         $raw = $line
         if ((Get-TeikenVisibleLength -Text $raw) -gt $innerWidth) {
-            $plain = [regex]::Replace($raw, "`e\[[0-9;]*m", '')
+            $plain = Strip-Ansi -Text $raw
             $plain = Get-TeikenMiddleEllipsis -Text $plain -MaxLength $innerWidth
             $raw = $plain
         }
@@ -588,33 +689,38 @@ function Process-TeikenUiInput {
     if (-not $State.TerminalCaps.Interactive) { return }
     if (-not $script:TeikenUiStarted) { return }
 
-    while ([Console]::KeyAvailable) {
-        $key = [Console]::ReadKey($true)
+    try {
+        while ([Console]::KeyAvailable) {
+            $key = [Console]::ReadKey($true)
 
-        if ($key.Modifiers -band [ConsoleModifiers]::Control -and $key.Key -eq [ConsoleKey]::C) {
-            $State.Cancelled = $true
-            $State.CancelReason = 'User cancelled with Ctrl+C'
-            return
-        }
-
-        switch ($key.Key) {
-            ([ConsoleKey]::Q) {
+            if ($key.Modifiers -band [ConsoleModifiers]::Control -and $key.Key -eq [ConsoleKey]::C) {
                 $State.Cancelled = $true
-                $State.CancelReason = 'User cancelled with Q'
+                $State.CancelReason = 'User cancelled with Ctrl+C'
                 return
             }
-            ([ConsoleKey]::V) {
-                $State.Ui.VerboseEnabled = -not $State.Ui.VerboseEnabled
-            }
-            ([ConsoleKey]::L) {
-                if (Test-Path $State.Paths.InstallLogDir) {
-                    Start-Process explorer.exe $State.Paths.InstallLogDir | Out-Null
+
+            switch ($key.Key) {
+                ([ConsoleKey]::Q) {
+                    $State.Cancelled = $true
+                    $State.CancelReason = 'User cancelled with Q'
+                    return
+                }
+                ([ConsoleKey]::V) {
+                    $State.Ui.VerboseEnabled = -not $State.Ui.VerboseEnabled
+                }
+                ([ConsoleKey]::L) {
+                    if (Test-Path $State.Paths.InstallLogDir) {
+                        Start-Process explorer.exe $State.Paths.InstallLogDir | Out-Null
+                    }
+                }
+                ([ConsoleKey]::Oem2) {
+                    $State.Ui.ShowHelp = -not $State.Ui.ShowHelp
                 }
             }
-            ([ConsoleKey]::Oem2) {
-                $State.Ui.ShowHelp = -not $State.Ui.ShowHelp
-            }
         }
+    } catch {
+        Write-TeikenMainLog -State $State -Message ("UI input handler warning: {0}" -f $_.Exception.Message)
+        return
     }
 }
 
@@ -632,37 +738,38 @@ function Render-TeikenFrame {
         return
     }
 
-    $now = [DateTime]::UtcNow
-    if (($now - $State.Ui.LastRender).TotalMilliseconds -lt 80) {
-        return
-    }
-
-    Process-TeikenUiInput -State $State
-
-    $State.Ui.Frame++
-    $State.Ui.SpinnerIndex = ($State.Ui.SpinnerIndex + 1) % $State.Ui.SpinnerFrames.Count
-    if ($State.Ui.Frame % 2 -eq 0) {
-        $State.Ui.ShimmerIndex++
-    }
-    $State.Ui.CometIndex++
-    if ($State.Ui.Frame % 6 -eq 0) {
-        $State.Ui.PulseOn = -not $State.Ui.PulseOn
-    }
-
     try {
-        $State.TerminalCaps.Width = [Console]::WindowWidth
-        $State.TerminalCaps.Height = [Console]::WindowHeight
-    } catch {
-    }
+        $now = [DateTime]::UtcNow
+        if (($now - $State.Ui.LastRender).TotalMilliseconds -lt 120) {
+            return
+        }
 
-    $width = [Math]::Max(70, $State.TerminalCaps.Width)
+        Process-TeikenUiInput -State $State
 
-    $frameLines = New-Object System.Collections.Generic.List[string]
-    $failure = [bool]($State.ExitCode -ne 0)
+        $State.Ui.Frame++
+        $State.Ui.SpinnerIndex = ($State.Ui.SpinnerIndex + 1) % $State.Ui.SpinnerFrames.Count
+        if ($State.Ui.Frame % 2 -eq 0) {
+            $State.Ui.ShimmerIndex++
+        }
+        $State.Ui.CometIndex++
+        if ($State.Ui.Frame % 6 -eq 0) {
+            $State.Ui.PulseOn = -not $State.Ui.PulseOn
+        }
 
-    if ($State.Ui.IntroPhase -lt 4) {
-        $State.Ui.IntroPhase++
-    }
+        try {
+            $State.TerminalCaps.Width = [Console]::WindowWidth
+            $State.TerminalCaps.Height = [Console]::WindowHeight
+        } catch {
+        }
+
+        $width = [Math]::Max(70, $State.TerminalCaps.Width)
+
+        $frameLines = New-Object System.Collections.Generic.List[string]
+        $failure = [bool]($State.ExitCode -ne 0)
+
+        if ($State.Ui.IntroPhase -lt 4) {
+            $State.Ui.IntroPhase++
+        }
 
     $frameLines.Add((Get-TeikenStyledTopBorder -State $State -Width $width -Failure $failure))
 
@@ -741,10 +848,10 @@ function Render-TeikenFrame {
             'fail' { Format-TeikenText -State $State -Text '✗' -Style 'Error' }
             'skipped' { Format-TeikenText -State $State -Text '·' -Style 'Muted' }
             'running' {
-                if ($State.TerminalCaps.Ansi) {
+                if ($State.TerminalCaps.Ansi -and $State.TerminalCaps.Unicode) {
                     Format-TeikenText -State $State -Text $State.Ui.SpinnerFrames[$State.Ui.SpinnerIndex] -Style 'TealBright'
                 } else {
-                    '/'
+                    '|'
                 }
             }
             default { Format-TeikenText -State $State -Text '•' -Style 'Muted' }
@@ -829,7 +936,11 @@ function Render-TeikenFrame {
 
     if ($State.Ui.VerboseEnabled) {
         $tail = @($State.Ui.VerboseTail)
-        $tailLines = if ($tail.Count -gt 20) { $tail[$tail.Count-20..$tail.Count-1] } else { $tail }
+        $tailLines = if ($tail.Count -gt 20) {
+            $tail[($tail.Count-20)..($tail.Count-1)]
+        } else {
+            $tail
+        }
         if (-not $tailLines -or $tailLines.Count -eq 0) {
             $tailLines = @('No output yet...')
         }
@@ -855,14 +966,19 @@ function Render-TeikenFrame {
     $frameLines.Add((Format-TeikenText -State $State -Text ('Main log: ' + $State.Artifacts.MainLogPath) -Style 'Dim'))
 
     $buffer = New-Object System.Text.StringBuilder
-    [void]$buffer.Append("${script:ESC}[H${script:ESC}[2J${script:ESC}[H")
+    [void]$buffer.Append("${script:CSI}H")
     foreach ($line in $frameLines) {
         [void]$buffer.Append($line)
         [void]$buffer.Append("`n")
     }
 
-    [Console]::Write($buffer.ToString())
-    $State.Ui.LastRender = [DateTime]::UtcNow
+        [Console]::Write($buffer.ToString())
+        $State.Ui.LastRender = [DateTime]::UtcNow
+    } catch {
+        Write-TeikenMainLog -State $State -Message ("UI render failure; fallback to plain mode: {0}" -f $_.Exception.Message)
+        $State.Mode = 'PLAIN'
+        try { Stop-TeikenUI -State $State } catch {}
+    }
 }
 
 function Start-TeikenUI {
@@ -890,7 +1006,13 @@ function Start-TeikenUI {
     } catch {
     }
 
-    [Console]::Write("${script:ESC}[?1049h${script:ESC}[?25l${script:ESC}[2J${script:ESC}[H")
+    try {
+        [Console]::Write("${script:CSI}?1049h${script:CSI}?25l${script:CSI}2J${script:CSI}H")
+    } catch {
+        Write-TeikenMainLog -State $State -Message ("Failed to enter cinematic mode; falling back to plain: {0}" -f $_.Exception.Message)
+        $State.Mode = 'PLAIN'
+        return
+    }
     $script:TeikenUiStarted = $true
 
     if ($State.TerminalCaps.Interactive) {
@@ -944,7 +1066,7 @@ function Stop-TeikenUI {
     }
 
     if ($script:TeikenUiStarted) {
-        [Console]::Write("${script:ESC}[0m${script:ESC}[?25h${script:ESC}[?1049l")
+        [Console]::Write("${script:CSI}0m${script:CSI}?25h${script:CSI}?1049l")
         $script:TeikenUiStarted = $false
     }
 }
@@ -1216,7 +1338,7 @@ function Invoke-TeikenStep {
             $tail = @($result.ErrorTailLines)
             if ($tail.Count -eq 0) { $tail = @($result.TailLines) }
             if ($tail.Count -gt 30) {
-                $tail = $tail[$tail.Count-30..$tail.Count-1]
+                $tail = $tail[($tail.Count-30)..($tail.Count-1)]
             }
             $State.Ui.FailureTail = $tail
         }
@@ -1392,7 +1514,7 @@ function Show-TeikenLaunchpad {
 
         $panel = New-TeikenPanel -State $State -Title 'Launchpad' -Lines $launchLines -Width $width
         $buffer = New-Object System.Text.StringBuilder
-        [void]$buffer.Append("${script:ESC}[H${script:ESC}[2J${script:ESC}[H")
+        [void]$buffer.Append("${script:CSI}H${script:CSI}2J${script:CSI}H")
         foreach ($line in $panel) {
             [void]$buffer.Append($line)
             [void]$buffer.Append("`n")
@@ -1447,3 +1569,4 @@ Export-ModuleMember -Function @(
     'Show-TeikenLaunchpad',
     'Write-TeikenSummaryArtifacts'
 )
+

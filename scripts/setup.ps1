@@ -28,7 +28,7 @@ if (-not (Test-Path $modulePath)) {
     exit 1
 }
 
-Import-Module $modulePath -Force
+Import-Module $modulePath -Force -DisableNameChecking
 
 function New-StepResult {
     param(
