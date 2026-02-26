@@ -133,6 +133,9 @@ Program outcome on 2026-02-25:
 | 2026-02-26 | `venv\\Scripts\\python.exe -m pytest -q tests/control_plane` | PASS | `30 passed` after hatch-delete crash hardening + tool execution loop coverage |
 | 2026-02-26 | `venv\\Scripts\\python.exe -m pytest -q` | PASS | `672 passed, 1 skipped` after agent delete/runtime cleanup and tool envelope execution changes |
 | 2026-02-26 | `venv\\Scripts\\python.exe -m flake8 --select=E9,F63,F7 --show-source --statistics app/ tests/ scripts/` | PASS | CI lint parity check remains green after control-plane fixes |
+| 2026-02-26 | `venv\\Scripts\\python.exe -m pytest -q tests/control_plane/test_hatch_screen.py tests/control_plane/test_hatch_flow.py tests/control_plane/test_tui_shell.py` | PASS | Hatch recovery UX pass: worker error guard + correlation-id recovery messaging |
+| 2026-02-26 | `venv\\Scripts\\python.exe -m pytest -q` | PASS | `674 passed, 1 skipped` after hatch-screen hardening |
+| 2026-02-26 | `venv\\Scripts\\python.exe -m flake8 --select=E9,F63,F7 --show-source --statistics app/ tests/ scripts/` | PASS | Lint/syntax gate remains green after hatch UX updates |
 
 ### Phase 12/13 Closure Notes
 
@@ -181,6 +184,10 @@ Program outcome on 2026-02-25:
    - real file creation from tool envelope
    - no execution for markdown-fence tool text
    - delete-running-agent path not crashing TUI/runtime
+11. Added hatch UX hardening pass:
+   - unified recovery messages with actionable buttons and correlation metadata
+   - app-level worker error guard to keep TUI alive on background action failures
+   - safe status-update fallback during retry paths to avoid secondary crashes
 
 ### 1.20.3 Install-Time Dynamic Boot Notes
 

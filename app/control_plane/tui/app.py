@@ -11,6 +11,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.screen import ModalScreen, Screen
+from textual.worker import Worker, WorkerState
 from textual.widgets import Button, Static
 
 from app.control_plane.bootstrap import ControlPlaneContext
@@ -123,7 +124,7 @@ class TeikenControlPlaneApp(App):
         current = self.screen
         refresh_fn = getattr(current, "refresh_data", None)
         if callable(refresh_fn):
-            self.run_worker(refresh_fn(), group="screen-refresh", exclusive=True)
+            self.run_worker(self._run_screen_task(refresh_fn), group="screen-refresh", exclusive=True)
 
     def action_focus_logs(self) -> None:
         self.open_route(Route.LOGS)
@@ -132,7 +133,7 @@ class TeikenControlPlaneApp(App):
         current = self.screen
         saver = getattr(current, "save_current", None)
         if callable(saver):
-            self.run_worker(saver(), group="screen-save", exclusive=True)
+            self.run_worker(self._run_screen_task(saver), group="screen-save", exclusive=True)
 
     def action_request_quit(self) -> None:
         snapshot = self.context.runtime_supervisor.snapshot()
@@ -145,6 +146,20 @@ class TeikenControlPlaneApp(App):
         error = getattr(event, "error", RuntimeError("Unknown TUI error"))
         self._python_logger.error(
             "Unhandled TUI error",
+            exc_info=(type(error), error, getattr(error, "__traceback__", None)),
+        )
+        current = self.screen
+        show_error = getattr(current, "show_error", None)
+        if callable(show_error):
+            show_error(error)
+        event.stop()
+
+    def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        if event.state != WorkerState.ERROR:
+            return
+        error = event.worker.error or RuntimeError("Background task failed")
+        self._python_logger.error(
+            "Worker error in TUI action",
             exc_info=(type(error), error, getattr(error, "__traceback__", None)),
         )
         current = self.screen
@@ -206,7 +221,11 @@ class TeikenControlPlaneApp(App):
         current = self.screen
         handler = getattr(current, "handle_primary_action", None)
         if callable(handler):
-            self.run_worker(handler(action_id), group=f"action-{action_id}", exclusive=False)
+            self.run_worker(
+                self._run_screen_task(lambda: handler(action_id)),
+                group=f"action-{action_id}",
+                exclusive=False,
+            )
 
     def _start_server(self) -> None:
         self.context.runtime_supervisor.start_dev_server()
@@ -219,3 +238,14 @@ class TeikenControlPlaneApp(App):
     def _restart_server(self) -> None:
         self.context.runtime_supervisor.restart_dev_server()
         self.action_refresh_screen()
+
+    async def _run_screen_task(self, task_factory) -> None:
+        """Run a screen coroutine with deterministic UI error mapping."""
+        try:
+            await task_factory()
+        except Exception as error:
+            current = self.screen
+            show_error = getattr(current, "show_error", None)
+            if callable(show_error):
+                show_error(error)
+            raise

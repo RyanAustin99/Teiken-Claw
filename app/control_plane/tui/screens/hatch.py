@@ -9,7 +9,7 @@ from textual.widgets import Button, Input, Select, Static
 from app.control_plane.domain.models import RunnerType, RuntimeStatus
 from app.control_plane.tui.navigation import Route
 from app.control_plane.tui.screens.base import BaseControlScreen
-from app.control_plane.tui.uikit import sanitize_terminal_text
+from app.control_plane.tui.uikit import ErrorPayload, sanitize_terminal_text
 
 
 class HatchScreen(BaseControlScreen):
@@ -42,6 +42,7 @@ class HatchScreen(BaseControlScreen):
             yield Static("Tool profile:")
             yield self.tool_profile
         with Horizontal(classes="cp-row"):
+            yield Button("Open Config", id="hatch-config")
             yield Button("Run Doctor", id="hatch-doctor")
             yield Button("Go Models", id="hatch-models")
             yield Button("Retry Start", id="hatch-retry")
@@ -59,6 +60,9 @@ class HatchScreen(BaseControlScreen):
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
+        if button_id == "hatch-config":
+            self.jump(Route.WIZARD)
+            return
         if button_id == "hatch-doctor":
             self.jump(Route.DOCTOR)
             return
@@ -74,13 +78,11 @@ class HatchScreen(BaseControlScreen):
                     await self.context.runtime_supervisor.restart_agent(self.last_agent_id)
                     self.status_box.update("Retry start complete.")
                 except Exception as exc:
-                    self.show_error(exc)
-                    self.context.agent_service.set_status(
-                        self.last_agent_id,
-                        RuntimeStatus.CRASHED,
-                        last_error=str(exc),
-                    )
-                    self.status_box.update("Retry start failed. Use Doctor/Models and retry.")
+                    payload = self.show_error_payload(exc)
+                    self._safe_set_status(self.last_agent_id, RuntimeStatus.CRASHED, str(exc))
+                    self.status_box.update(self._build_recovery_message("Retry start failed.", payload))
+            else:
+                self.status_box.update("No prior hatched agent to retry.")
             return
         await super().on_button_pressed(event)
 
@@ -113,38 +115,26 @@ class HatchScreen(BaseControlScreen):
                 )
             self.last_agent_id = agent.id
         except Exception as exc:
-            self.show_error(exc)
-            self.status_box.update(
-                sanitize_terminal_text(
-                    "Hatch failed before runtime start.\nUse recovery actions: Run Doctor, Go Models, Edit Agent, Retry Start."
-                )
-            )
+            payload = self.show_error_payload(exc)
+            self.status_box.update(self._build_recovery_message("Hatch failed before runtime start.", payload))
             self._hatch_in_flight = False
             return
 
         try:
             await self.context.runtime_supervisor.start_agent(agent.id)
         except Exception as exc:
-            self.show_error(exc)
-            self.context.agent_service.set_status(agent.id, RuntimeStatus.CRASHED, last_error=str(exc))
-            self.status_box.update(
-                sanitize_terminal_text(
-                    "Hatch failed while starting runtime.\nUse recovery actions: Run Doctor, Go Models, Edit Agent, Retry Start."
-                )
-            )
+            payload = self.show_error_payload(exc)
+            self._safe_set_status(agent.id, RuntimeStatus.CRASHED, str(exc))
+            self.status_box.update(self._build_recovery_message("Hatch failed while starting runtime.", payload))
             self._hatch_in_flight = False
             return
 
         try:
             session = self.context.session_service.new_session(agent.id, title=f"{agent.name} session")
         except Exception as exc:
-            self.show_error(exc)
-            self.context.agent_service.set_status(agent.id, RuntimeStatus.CRASHED, last_error=str(exc))
-            self.status_box.update(
-                sanitize_terminal_text(
-                    "Agent created, but session setup failed.\nUse recovery actions: Run Doctor, Go Models, Edit Agent, Retry Start."
-                )
-            )
+            payload = self.show_error_payload(exc)
+            self._safe_set_status(agent.id, RuntimeStatus.CRASHED, str(exc))
+            self.status_box.update(self._build_recovery_message("Agent created, but session setup failed.", payload))
             self._hatch_in_flight = False
             return
 
@@ -160,14 +150,32 @@ class HatchScreen(BaseControlScreen):
             )
             self.open_chat(agent_id=agent.id)
         except Exception as exc:
-            self.show_error(exc)
-            self.status_box.update(
-                sanitize_terminal_text(
-                    "Hatch failed.\nUse recovery actions: Run Doctor, Go Models, Edit Agent, Retry Start."
-                )
-            )
+            payload = self.show_error_payload(exc)
+            self.status_box.update(self._build_recovery_message("Hatch completed with UI handoff error.", payload))
         finally:
             self._hatch_in_flight = False
 
     async def save_current(self) -> None:
         await self._hatch()
+
+    def _safe_set_status(self, agent_id: str, status: RuntimeStatus, last_error: str) -> None:
+        try:
+            self.context.agent_service.set_status(agent_id, status, last_error=last_error)
+        except Exception:
+            # If the agent no longer exists, keep UI alive and focus on recovery actions.
+            pass
+
+    @staticmethod
+    def _build_recovery_message(summary: str, payload: ErrorPayload) -> str:
+        lines = [summary]
+        lines.append("Recovery actions: Open Config, Run Doctor, Go Models, Edit Agent, Retry Start.")
+        meta: list[str] = []
+        if payload.code:
+            meta.append(f"code={payload.code}")
+        if payload.correlation_id:
+            meta.append(f"correlation_id={payload.correlation_id}")
+        if payload.logs_path:
+            meta.append(f"logs={payload.logs_path}")
+        if meta:
+            lines.append(" | ".join(meta))
+        return sanitize_terminal_text("\n".join(lines))

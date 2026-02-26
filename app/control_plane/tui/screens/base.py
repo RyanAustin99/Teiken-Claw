@@ -11,7 +11,7 @@ from textual.widgets import Button, Footer, Header, Static
 
 from app.control_plane.bootstrap import ControlPlaneContext
 from app.control_plane.tui.navigation import Route, ROUTE_TITLES
-from app.control_plane.tui.uikit import ErrorBanner, map_exception_to_payload
+from app.control_plane.tui.uikit import ErrorBanner, ErrorPayload, map_exception_to_payload
 
 
 class BaseControlScreen(Screen):
@@ -71,9 +71,13 @@ class BaseControlScreen(Screen):
     def clear_error(self) -> None:
         self.error_banner.clear()
 
-    def show_error(self, error: Exception) -> None:
+    def show_error_payload(self, error: Exception) -> ErrorPayload:
         payload = map_exception_to_payload(error, logs_path=self.context.paths.logs_dir)
         self.error_banner.show_error(payload)
+        return payload
+
+    def show_error(self, error: Exception) -> None:
+        self.show_error_payload(error)
 
     def jump(self, route: Route) -> None:
         app = self.app
