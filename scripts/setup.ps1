@@ -51,7 +51,7 @@ function Show-SetupBranding {
     $tealReset = if ($useTrueTeal) { "$([char]27)[0m" } else { "" }
 
     $bannerPath = Join-Path $ProjectRoot "teiken_claw\terminal\assets\banner_teiken_claw.txt"
-    $underlayPath = Join-Path $ProjectRoot "scripts\assets\underlay_teiken_matrix.txt"
+    $underlayPath = Join-Path $ProjectRoot "scripts\assets\underlay_teiken_logo.ans"
     $banner = @()
     if (Test-Path $bannerPath) {
         $banner = Get-Content -Path $bannerPath -Encoding UTF8
@@ -67,7 +67,7 @@ function Show-SetupBranding {
 
         if ($null -eq $Line) { return "" }
         $esc = [char]27
-        return [regex]::Replace(
+        $normalized = [regex]::Replace(
             $Line,
             [regex]::Escape("$esc") + "\[[0-9;?]*[ -/]*[@-~]",
             {
@@ -77,6 +77,26 @@ function Show-SetupBranding {
                 return ""
             }
         )
+        return $normalized.Replace([string][char]0, "")
+    }
+
+    function Read-TeikenAnsiText {
+        param(
+            [Parameter(Mandatory = $true)]
+            [string]$Path
+        )
+
+        $bytes = [System.IO.File]::ReadAllBytes($Path)
+        if ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) {
+            return [System.Text.Encoding]::Unicode.GetString($bytes)
+        }
+        if ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFE -and $bytes[1] -eq 0xFF) {
+            return [System.Text.Encoding]::BigEndianUnicode.GetString($bytes)
+        }
+        if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+            return [System.Text.Encoding]::UTF8.GetString($bytes, 3, $bytes.Length - 3)
+        }
+        return [System.Text.Encoding]::UTF8.GetString($bytes)
     }
 
     Write-Host ""
@@ -89,11 +109,9 @@ function Show-SetupBranding {
     }
     Write-Host ""
     if (Test-Path $underlayPath) {
-        $underlayRaw = [System.Text.Encoding]::UTF8.GetString([System.IO.File]::ReadAllBytes($underlayPath))
-        $underlayLines = @($underlayRaw -split "`r?`n")
-        $maxRows = [Math]::Min(10, $underlayLines.Count)
-        for ($i = 0; $i -lt $maxRows; $i++) {
-            $line = Normalize-TeikenAnsiLine -Line $underlayLines[$i]
+        $underlayRaw = Read-TeikenAnsiText -Path $underlayPath
+        $underlayLines = @($underlayRaw -split "`r?`n" | ForEach-Object { Normalize-TeikenAnsiLine -Line $_ } | Where-Object { $_.Trim().Length -gt 0 })
+        foreach ($line in $underlayLines) {
             [Console]::WriteLine($line)
         }
         if ($useTrueTeal) {
