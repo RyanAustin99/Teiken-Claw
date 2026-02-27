@@ -23,6 +23,7 @@ from app.control_plane.bootstrap import ControlPlaneContext
 from app.control_plane.install.agent_registry import AgentRegistry
 from app.control_plane.install.boot_report import BootCheckResult
 from app.control_plane.install.runtime_snapshot import RuntimeSnapshotView
+from teiken_claw.terminal.banner import load_banner_lines, render_banner_frame
 
 
 TEIKEN_THEME = Theme(
@@ -87,25 +88,7 @@ def ports_and_urls(config: StartupConfig) -> Dict[str, str]:
     }
 
 
-def _logo_frame(tick: int) -> Text:
-    title = "TEIKEN CLAW"
-    subtitle = "Install Boot | Agent Service"
-    shimmer = tick % (len(title) + 8)
-    text = Text()
-
-    for index, char in enumerate(title):
-        distance = abs(index - shimmer)
-        if distance <= 1:
-            style = "bold #FFFFFF on #00D1B2"
-        elif distance <= 3:
-            style = "bold #00D1B2"
-        else:
-            style = "brand"
-        text.append(char, style=style)
-
-    text.append("\n")
-    text.append(subtitle, style="accent")
-    return text
+_BANNER_LINES = load_banner_lines()
 
 
 def _config_panel(config: StartupConfig) -> Panel:
@@ -352,7 +335,7 @@ def run_live_boot(
     def render(frame: int) -> Layout:
         layout = Layout()
         layout.split_column(
-            Layout(name="header", size=7),
+            Layout(name="header", size=9),
             Layout(name="body", ratio=1),
             Layout(name="footer", size=10),
         )
@@ -360,7 +343,7 @@ def run_live_boot(
         layout["right"].split_column(Layout(name="right_top", size=10), Layout(name="right_mid", ratio=1))
 
         steps = [(step_labels[key], step_states[key]) for key in step_order]
-        layout["header"].update(Panel(Align.center(_logo_frame(frame)), border_style="brand"))
+        layout["header"].update(Panel(Align.center(render_banner_frame(_BANNER_LINES, frame)), border_style="brand"))
         layout["left"].update(_config_panel(config))
         layout["right_top"].update(_ports_panel(config))
         layout["right_mid"].update(_agents_panel(registry))

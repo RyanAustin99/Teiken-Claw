@@ -32,49 +32,25 @@ Import-Module $modulePath -Force -DisableNameChecking
 
 function Show-SetupBranding {
     param(
-        [switch]$NoColor
+        [switch]$NoColor,
+        [string]$ProjectRoot
     )
 
     $teal = if ($NoColor) { "Gray" } else { "Cyan" }
-    $orange = if ($NoColor) { "Gray" } else { "DarkYellow" }
     $muted = if ($NoColor) { "Gray" } else { "DarkGray" }
 
-    $banner = @(
-        'BANNER = r"""',
-        "TTTTTTTT  EEEEEEE  III  K   K  EEEEEEE  N   N      CCCCC   L        AAAAA   W     W",
-        "   TT     E        III  K  K   E        NN  N     C        L       A     A  W     W",
-        "   TT     EEEEE    III  KKK    EEEEE    N N N     C        L       AAAAAAA  W  W  W",
-        "   TT     E        III  K  K   E        N  NN     C        L       A     A  W W W W",
-        "   TT     EEEEEEE  III  K   K  EEEEEEE  N   N      CCCCC   LLLLLL  A     A   W   W",
-        '"""'
-    )
-
-    $logo = @(
-        "      /\\                          /\\",
-        "     /**\\                        /**\\",
-        "    /****\\      TTTTTTTTTT      /****\\",
-        "   /******\\          TT         /******\\",
-        "  /********\\         TT        /********\\",
-        "      ||             TT            ||",
-        "      ||             TT            ||",
-        "      ||             TT            ||",
-        "                     TT",
-        "               TEIKEN CLAW",
-        "      Locally Hosted First - Agent Platform"
-    )
-
-    Write-Host ""
-    for ($i = 0; $i -lt $banner.Count; $i++) {
-        $line = $banner[$i]
-        if ($line -eq 'BANNER = r"""' -or $line -eq '"""') {
-            Write-Host $line -ForegroundColor Magenta
-        } else {
-            Write-Host $line -ForegroundColor $teal
-        }
+    $bannerPath = Join-Path $ProjectRoot "teiken_claw\terminal\assets\banner_teiken_claw.txt"
+    $banner = @()
+    if (Test-Path $bannerPath) {
+        $banner = Get-Content -Path $bannerPath -Encoding UTF8
     }
+    if (-not $banner -or $banner.Count -eq 0) {
+        $banner = @("TEIKEN CLAW")
+    }
+
     Write-Host ""
-    foreach ($line in $logo) {
-        Write-Host $line -ForegroundColor $orange
+    foreach ($line in $banner) {
+        Write-Host $line -ForegroundColor $teal
     }
     Write-Host ""
     Write-Host "Installer mode: stable plain output (no animation)" -ForegroundColor $muted
@@ -140,7 +116,7 @@ $state.Mode = "PLAIN"
 
 if (-not $CI) {
     $noBrandColor = $NoAnsi -or $env:TEIKEN_NO_COLOR -eq "1"
-    Show-SetupBranding -NoColor:$noBrandColor
+    Show-SetupBranding -NoColor:$noBrandColor -ProjectRoot $projectRoot
 }
 
 $launchAction = "run_control_plane"

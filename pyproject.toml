@@ -17,5 +17,5 @@ teiken-claw = "app.control_plane.entrypoint:main"
 include-package-data = true
 
 [tool.setuptools.packages.find]
-include = ["app*"]
+include = ["app*", "teiken_claw*"]
 
