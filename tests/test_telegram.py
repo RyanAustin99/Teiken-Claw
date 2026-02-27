@@ -298,6 +298,18 @@ class TestCommandRouter:
         router._paused_chats.add(12345)
         assert router.is_paused(12345)
 
+    @pytest.mark.asyncio
+    async def test_hatch_commands_without_control_plane_context(self):
+        router = CommandRouter(admin_chat_ids=[12345], control_plane_context=None)
+        hatch = await router.handle_hatch(12345, 111, [])
+        identity = await router.handle_identity(12345, 111)
+        rename = await router.handle_rename(12345, 111, ["Forge"])
+        onboard = await router.handle_onboard(12345, 111)
+        assert "unavailable" in hatch.lower()
+        assert "unavailable" in identity.lower()
+        assert "unavailable" in rename.lower()
+        assert "unavailable" in onboard.lower()
+
 
 # =============================================================================
 # TelegramSender Tests
@@ -377,6 +389,20 @@ class TestTelegramSender:
         )
         assert result  # Should succeed
         assert sender._total_chunks > 0
+
+    @pytest.mark.asyncio
+    async def test_send_message_strips_tc_profile_before_send(self):
+        with patch("app.interfaces.telegram_sender.HAS_TELEGRAM", True), patch("app.interfaces.telegram_sender.Bot"):
+            sender = TelegramSender(token="test_token")
+            sender._send_with_retry = AsyncMock(return_value=True)
+            ok = await sender.send_message(
+                chat_id="12345",
+                text='<tc_profile>{"agent_display_name":"Forge"}</tc_profile>\n\nHello there',
+            )
+            assert ok
+            sender._send_with_retry.assert_awaited_once()
+            sent_text = sender._send_with_retry.await_args.kwargs["text"]
+            assert sent_text == "Hello there"
 
 
 # =============================================================================

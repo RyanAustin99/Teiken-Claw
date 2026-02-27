@@ -15,6 +15,7 @@ from typing import Optional, List, Callable, Any
 
 from app.config.logging import get_logger
 from app.config.settings import settings
+from app.interfaces.tc_profile_strip import extract_tc_profile
 from app.queue.throttles import OutboundQueue, get_outbound_queue
 
 logger = get_logger(__name__)
@@ -229,6 +230,13 @@ class TelegramSender:
             self._total_sent += 1
             return True
         
+        # Always strip hidden profile envelope before sending.
+        _, visible_text, _ = extract_tc_profile(text or "")
+        text = visible_text
+        if not text.strip():
+            logger.debug("Skipping empty Telegram message after tc_profile stripping")
+            return True
+
         # Check if message needs to be chunked
         if len(text) > self.MAX_MESSAGE_LENGTH:
             return await self.send_chunked_message(

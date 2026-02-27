@@ -144,6 +144,18 @@ class TelegramBot:
         self._application.add_handler(
             CommandHandler("admin", self._handle_admin)
         )
+        self._application.add_handler(
+            CommandHandler("hatch", self._handle_hatch)
+        )
+        self._application.add_handler(
+            CommandHandler("identity", self._handle_identity)
+        )
+        self._application.add_handler(
+            CommandHandler("rename", self._handle_rename)
+        )
+        self._application.add_handler(
+            CommandHandler("onboard", self._handle_onboard)
+        )
         
         # Message handler for non-command messages
         self._application.add_handler(
@@ -581,6 +593,56 @@ class TelegramBot:
             response,
             parse_mode="Markdown"
         )
+
+    async def _handle_hatch(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /hatch command."""
+        if not update.effective_message:
+            return
+        chat_id = update.effective_chat.id
+        user_id = update.effective_user.id if update.effective_user else 0
+        args = context.args if context.args else []
+        if self.command_router and hasattr(self.command_router, "handle_hatch"):
+            response = await self.command_router.handle_hatch(chat_id, user_id, args)
+        else:
+            response = "Hatch command not available."
+        await update.effective_message.reply_text(response)
+
+    async def _handle_identity(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /identity command."""
+        if not update.effective_message:
+            return
+        chat_id = update.effective_chat.id
+        user_id = update.effective_user.id if update.effective_user else 0
+        if self.command_router and hasattr(self.command_router, "handle_identity"):
+            response = await self.command_router.handle_identity(chat_id, user_id)
+        else:
+            response = "Identity command not available."
+        await update.effective_message.reply_text(response)
+
+    async def _handle_rename(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /rename command."""
+        if not update.effective_message:
+            return
+        chat_id = update.effective_chat.id
+        user_id = update.effective_user.id if update.effective_user else 0
+        args = context.args if context.args else []
+        if self.command_router and hasattr(self.command_router, "handle_rename"):
+            response = await self.command_router.handle_rename(chat_id, user_id, args)
+        else:
+            response = "Rename command not available."
+        await update.effective_message.reply_text(response)
+
+    async def _handle_onboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /onboard command."""
+        if not update.effective_message:
+            return
+        chat_id = update.effective_chat.id
+        user_id = update.effective_user.id if update.effective_user else 0
+        if self.command_router and hasattr(self.command_router, "handle_onboard"):
+            response = await self.command_router.handle_onboard(chat_id, user_id)
+        else:
+            response = "Onboard command not available."
+        await update.effective_message.reply_text(response)
     
     # =========================================================================
     # Message Handler
@@ -610,7 +672,22 @@ class TelegramBot:
                 "text_length": len(text),
             }
         )
-        
+
+        # If this chat is bound to a hatched control-plane session, route directly.
+        if self.command_router and hasattr(self.command_router, "has_hatch_session"):
+            try:
+                if self.command_router.has_hatch_session(chat_id):
+                    response = await self.command_router.handle_chat_message(chat_id, user_id, text)
+                    if response:
+                        await update.effective_message.reply_text(response)
+                        return
+            except Exception as e:
+                logger.error(
+                    f"Hatched direct chat handling failed: {e}",
+                    extra={"event": "telegram_hatched_direct_chat_error", "chat_id": chat_id},
+                    exc_info=True,
+                )
+
         # Show typing indicator
         await self._show_typing(chat_id)
         

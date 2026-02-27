@@ -16,6 +16,7 @@ from typing import Optional, List, Dict, Any
 
 from app.config.logging import get_logger
 from app.config.settings import settings
+from app.memory.store import get_memory_store
 from app.queue.dispatcher import get_dispatcher
 from app.queue.workers import get_worker_pool
 from app.agent import get_ollama_client, get_circuit_breaker_metrics
@@ -38,7 +39,7 @@ class CommandRouter:
     # Available modes
     MODES = ["default", "architect", "operator", "coder", "researcher"]
     
-    def __init__(self, admin_chat_ids: Optional[List[int]] = None):
+    def __init__(self, admin_chat_ids: Optional[List[int]] = None, control_plane_context: Optional[Any] = None):
         """
         Initialize the command router.
         
@@ -51,6 +52,8 @@ class CommandRouter:
         self._paused_chats: set = set()
         self._paused_jobs: set = set()
         self._all_paused = False
+        self.control_plane_context = control_plane_context
+        self._hatch_sessions: Dict[str, Dict[str, str]] = {}
         
         logger.info(
             f"CommandRouter initialized with {len(self.admin_chat_ids)} admin IDs",
@@ -146,6 +149,12 @@ class CommandRouter:
 /pause tools \\- Pause dangerous tools
 /pause all \\- Pause everything
 /resume \\- Resume from pause
+
+*Hatch Commands:*
+/hatch [name] \\- Hatch or attach an agent and open chat
+/identity \\- Show current hatched identity
+/rename \\<name\\> \\- Rename current hatched display identity
+/onboard \\- Re-enter onboarding state
 """
         
         # Add admin commands if user is admin
@@ -1275,6 +1284,182 @@ class CommandRouter:
     def get_current_mode(self, chat_id: int) -> str:
         """Get the current mode for a chat."""
         return self.current_modes.get(str(chat_id), "default")
+
+    # =========================================================================
+    # Hatch Commands (Phase 19)
+    # =========================================================================
+
+    def has_hatch_session(self, chat_id: int) -> bool:
+        """Whether chat is bound to a control-plane hatch session."""
+        return str(chat_id) in self._hatch_sessions
+
+    async def handle_hatch(self, chat_id: int, user_id: int, args: List[str]) -> str:
+        """Handle /hatch command for Telegram-managed control-plane sessions."""
+        if not self.control_plane_context:
+            return "Hatch is unavailable in this runtime."
+
+        cp = self.control_plane_context
+        requested_name = " ".join(args).strip() if args else ""
+        if not requested_name:
+            requested_name = f"tg-agent-{chat_id}"
+        agent_name = requested_name[:48]
+
+        agent = cp.agent_service.get_agent(agent_name)
+        if not agent:
+            try:
+                agent = cp.agent_service.create_agent(
+                    name=agent_name,
+                    description=f"Telegram hatched agent for chat {chat_id}",
+                    tool_profile="safe",
+                    allow_dangerous_override=False,
+                    prompt_template_version=cp.config_service.load().values.agent_prompt_template_version,
+                )
+            except Exception as exc:
+                return f"Hatch failed: {exc}"
+
+        try:
+            await cp.runtime_supervisor.start_agent(agent.id)
+        except Exception as exc:
+            cp.agent_service.update_agent(agent.id, {"status": "crashed", "last_error": str(exc)})
+            return f"Runtime start failed: {exc}"
+
+        session = cp.session_service.new_session(agent.id, title=f"Telegram chat {chat_id}")
+        self._hatch_sessions[str(chat_id)] = {"agent_id": agent.id, "session_id": session.id}
+
+        try:
+            boot = await cp.runtime_supervisor.trigger_hatch_boot(
+                agent_id=agent.id,
+                session_id=session.id,
+                user_metadata={"username": str(user_id), "display_name": str(user_id)},
+            )
+        except Exception as exc:
+            cp.agent_service.update_agent(agent.id, {"degraded_reason": f"boot_failed: {exc}", "status": "degraded"})
+            return (
+                f"Hatched {agent.name} ({agent.id[:8]})\n"
+                f"Session: {session.id}\n"
+                "First-message boot failed. Agent was kept as degraded."
+            )
+
+        return (
+            f"Hatched {agent.name} ({agent.id[:8]})\n"
+            f"Session: {session.id}\n\n"
+            f"{boot}"
+        )
+
+    async def handle_identity(self, chat_id: int, user_id: int) -> str:
+        """Handle /identity command."""
+        if not self.control_plane_context:
+            return "Identity is unavailable in this runtime."
+        state = self._hatch_sessions.get(str(chat_id))
+        if not state:
+            return "No active hatched agent in this chat. Use /hatch first."
+
+        cp = self.control_plane_context
+        agent = cp.agent_service.get_agent(state["agent_id"])
+        if not agent:
+            return "Hatched agent not found anymore."
+
+        profile = agent.profile_json or {}
+        display_name = profile.get("agent_display_name") or agent.agent_profile_agent_name or agent.name
+        voice = profile.get("agent_voice") or []
+        principles = profile.get("agent_principles") or []
+        lines = [f"Name: {display_name}"]
+        if voice:
+            lines.append(f"Voice: {', '.join(str(v) for v in voice)}")
+        if principles:
+            lines.append("Principles: " + "; ".join(str(p) for p in principles[:5]))
+        return "\n".join(lines)
+
+    async def handle_rename(self, chat_id: int, user_id: int, args: List[str]) -> str:
+        """Handle /rename <name> command."""
+        if not self.control_plane_context:
+            return "Rename is unavailable in this runtime."
+        state = self._hatch_sessions.get(str(chat_id))
+        if not state:
+            return "No active hatched agent in this chat. Use /hatch first."
+        new_name = " ".join(args).strip()
+        if len(new_name) < 2 or len(new_name) > 32:
+            return "Name must be between 2 and 32 characters."
+
+        cp = self.control_plane_context
+        agent = cp.agent_service.get_agent(state["agent_id"])
+        if not agent:
+            return "Hatched agent not found anymore."
+
+        profile = dict(agent.profile_json or {})
+        profile["agent_display_name"] = new_name
+        cp.agent_service.update_agent(
+            agent.id,
+            {
+                "agent_profile_agent_name": new_name,
+                "profile_json": profile,
+            },
+        )
+        get_memory_store().create_memory(
+            memory_type="semantic",
+            content=new_name,
+            scope=f"agent:{agent.id}",
+            source="USER",
+            key="agent_display_name",
+            confidence=1.0,
+            metadata={"scope": "AGENT_SELF"},
+        )
+        return f"Updated identity name to: {new_name}"
+
+    async def handle_onboard(self, chat_id: int, user_id: int) -> str:
+        """Handle /onboard command for re-entering onboarding."""
+        if not self.control_plane_context:
+            return "Onboarding reset is unavailable in this runtime."
+        state = self._hatch_sessions.get(str(chat_id))
+        if not state:
+            return "No active hatched agent in this chat. Use /hatch first."
+
+        cp = self.control_plane_context
+        agent = cp.agent_service.get_agent(state["agent_id"])
+        if not agent:
+            return "Hatched agent not found anymore."
+
+        cp.agent_service.update_agent(
+            agent.id,
+            {
+                "is_fresh": True,
+                "onboarding_state": "WAITING_USER_PREFS",
+                "degraded_reason": None,
+            },
+        )
+        try:
+            boot = await cp.runtime_supervisor.trigger_hatch_boot(
+                agent_id=agent.id,
+                session_id=state["session_id"],
+                user_metadata={"username": str(user_id), "display_name": str(user_id)},
+                overwrite_profile=False,
+            )
+        except Exception as exc:
+            cp.agent_service.update_agent(agent.id, {"degraded_reason": f"boot_failed: {exc}", "status": "degraded"})
+            return "Onboarding reset, but boot regeneration failed."
+        return boot
+
+    async def handle_chat_message(self, chat_id: int, user_id: int, text: str) -> Optional[str]:
+        """Handle normal chat message via control-plane runtime when hatched session exists."""
+        if not self.control_plane_context:
+            return None
+        state = self._hatch_sessions.get(str(chat_id))
+        if not state:
+            return None
+
+        cp = self.control_plane_context
+        try:
+            return await cp.runtime_supervisor.chat(
+                agent_id=state["agent_id"],
+                session_id=state["session_id"],
+                message=text,
+            )
+        except Exception as exc:
+            logger.error(
+                "Telegram hatched chat failed",
+                extra={"event": "telegram_hatched_chat_failed", "chat_id": chat_id, "error": str(exc)},
+            )
+            return f"Chat failed: {exc}"
 
 
 __all__ = ["CommandRouter"]

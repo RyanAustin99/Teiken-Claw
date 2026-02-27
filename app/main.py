@@ -63,6 +63,7 @@ from app.interfaces import (
     set_telegram_bot,
     set_telegram_sender,
 )
+from app.control_plane.bootstrap import build_context
 
 # Memory system imports
 from app.memory.store import MemoryStore, get_memory_store, set_memory_store
@@ -465,7 +466,15 @@ async def _initialize_queue_system() -> dict:
         
         # 13. Initialize Command Router
         logger.info("Initializing command router...")
-        _command_router = CommandRouter()
+        cp_context = None
+        try:
+            cp_context = build_context()
+        except Exception as e:
+            logger.warning(
+                f"Failed to build control-plane context for Telegram hatch commands: {e}",
+                extra={"event": "telegram_cp_context_init_failed"},
+            )
+        _command_router = CommandRouter(control_plane_context=cp_context)
         status["command_router"] = "initialized"
         
         # 14. Initialize Telegram Sender
