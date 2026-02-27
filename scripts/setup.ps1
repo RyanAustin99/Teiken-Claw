@@ -51,12 +51,32 @@ function Show-SetupBranding {
     $tealReset = if ($useTrueTeal) { "$([char]27)[0m" } else { "" }
 
     $bannerPath = Join-Path $ProjectRoot "teiken_claw\terminal\assets\banner_teiken_claw.txt"
+    $underlayPath = Join-Path $ProjectRoot "scripts\assets\underlay_teiken_matrix.txt"
     $banner = @()
     if (Test-Path $bannerPath) {
         $banner = Get-Content -Path $bannerPath -Encoding UTF8
     }
     if (-not $banner -or $banner.Count -eq 0) {
         $banner = @("TEIKEN CLAW")
+    }
+
+    function Normalize-TeikenAnsiLine {
+        param(
+            [string]$Line
+        )
+
+        if ($null -eq $Line) { return "" }
+        $esc = [char]27
+        return [regex]::Replace(
+            $Line,
+            [regex]::Escape("$esc") + "\[[0-9;?]*[ -/]*[@-~]",
+            {
+                param($m)
+                $value = $m.Value
+                if ($value.EndsWith("m")) { return $value }
+                return ""
+            }
+        )
     }
 
     Write-Host ""
@@ -68,6 +88,19 @@ function Show-SetupBranding {
         }
     }
     Write-Host ""
+    if (Test-Path $underlayPath) {
+        $underlayRaw = [System.Text.Encoding]::UTF8.GetString([System.IO.File]::ReadAllBytes($underlayPath))
+        $underlayLines = @($underlayRaw -split "`r?`n")
+        $maxRows = [Math]::Min(10, $underlayLines.Count)
+        for ($i = 0; $i -lt $maxRows; $i++) {
+            $line = Normalize-TeikenAnsiLine -Line $underlayLines[$i]
+            [Console]::WriteLine($line)
+        }
+        if ($useTrueTeal) {
+            [Console]::WriteLine("$([char]27)[0m")
+        }
+        Write-Host ""
+    }
     Write-Host "Installer mode: stable plain output (no animation)" -ForegroundColor $muted
     Write-Host ""
 }
@@ -126,6 +159,9 @@ $state = Get-TeikenInstallerContext `
     -NoStart:$NoStart `
     -NoUi:$NoUi
 
+# Old cinematic installer menu is disabled; setup runs in stable plain mode.
+$state.Mode = if ($CI) { "CI" } else { "PLAIN" }
+
 if (-not $CI) {
     $noBrandColor = $NoAnsi -or $env:TEIKEN_NO_COLOR -eq "1"
     Show-SetupBranding -NoColor:$noBrandColor -ProjectRoot $projectRoot
@@ -136,15 +172,6 @@ $script:setupUnhandled = $null
 
 try {
     Start-TeikenUI -State $state
-
-    if ($state.Mode -eq "CINEMATIC") {
-        $holdUntil = (Get-Date).AddSeconds(5)
-        while ((Get-Date) -lt $holdUntil) {
-            if ($state.Cancelled) { break }
-            Render-TeikenFrame -State $state
-            Start-Sleep -Milliseconds 100
-        }
-    }
 
     $null = Invoke-TeikenStep -State $state -StepId "resolve_context" -Action {
         param($state, $step)
