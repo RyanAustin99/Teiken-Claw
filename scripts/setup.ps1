@@ -38,6 +38,17 @@ function Show-SetupBranding {
 
     $teal = if ($NoColor) { "Gray" } else { "Cyan" }
     $muted = if ($NoColor) { "Gray" } else { "DarkGray" }
+    $useTrueTeal = $false
+    if (-not $NoColor) {
+        try {
+            if ($Host -and $Host.UI -and $Host.UI.SupportsVirtualTerminal) {
+                $useTrueTeal = $true
+            }
+        } catch {
+        }
+    }
+    $tealStart = if ($useTrueTeal) { "$([char]27)[38;2;0;209;178m" } else { "" }
+    $tealReset = if ($useTrueTeal) { "$([char]27)[0m" } else { "" }
 
     $bannerPath = Join-Path $ProjectRoot "teiken_claw\terminal\assets\banner_teiken_claw.txt"
     $banner = @()
@@ -50,7 +61,11 @@ function Show-SetupBranding {
 
     Write-Host ""
     foreach ($line in $banner) {
-        Write-Host $line -ForegroundColor $teal
+        if ($useTrueTeal) {
+            Write-Host ("{0}{1}{2}" -f $tealStart, $line, $tealReset)
+        } else {
+            Write-Host $line -ForegroundColor $teal
+        }
     }
     Write-Host ""
     Write-Host "Installer mode: stable plain output (no animation)" -ForegroundColor $muted
