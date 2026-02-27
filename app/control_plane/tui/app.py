@@ -252,4 +252,4 @@ class TeikenControlPlaneApp(App):
             show_error = getattr(current, "show_error", None)
             if callable(show_error):
                 show_error(error)
-            raise
+            return

@@ -69,3 +69,21 @@ def test_delete_agent_survives_session_cleanup_failure(tmp_path):
     deleted = _run(router.execute("agents delete delete-resilient --yes"))
     assert "Deleted: delete-resilient" in deleted.output
     assert context.agent_service.get_agent("delete-resilient") is None
+
+
+def test_delete_agent_survives_runtime_audit_failure(tmp_path):
+    context = build_context(cli_data_dir=str(tmp_path / "cp_data"))
+    router = TuiCommandRouter(context)
+
+    hatch = _run(router.execute("hatch --name delete-audit-failure"))
+    assert "Started runtime and opened chat session" in hatch.output
+
+    class _FailingAudit:
+        def log(self, *_args, **_kwargs) -> None:
+            raise RuntimeError("audit unavailable")
+
+    context.runtime_supervisor.audit_service = _FailingAudit()
+
+    deleted = _run(router.execute("agents delete delete-audit-failure --yes"))
+    assert "Deleted: delete-audit-failure" in deleted.output
+    assert context.agent_service.get_agent("delete-audit-failure") is None

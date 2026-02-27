@@ -123,9 +123,16 @@ class RuntimeSupervisor:
 
     async def delete_agent(self, agent_id: str) -> bool:
         """Stop runtime state and delete agent/session persistence safely."""
-        agent = self.agent_service.get_agent(agent_id)
-        resolved_agent_id = agent.id if agent else agent_id
         cleanup_errors: list[str] = []
+        deleted = False
+        resolved_agent_id = agent_id
+
+        try:
+            agent = self.agent_service.get_agent(agent_id)
+            resolved_agent_id = agent.id if agent else agent_id
+        except Exception as exc:
+            cleanup_errors.append(f"agent_lookup_failed:{exc}")
+
         try:
             await self.stop_agent(resolved_agent_id)
         except Exception as exc:
@@ -139,26 +146,30 @@ class RuntimeSupervisor:
         except Exception as exc:
             cleanup_errors.append(f"session_cleanup_failed:{exc}")
 
-        deleted = False
         try:
             deleted = self.agent_service.delete_agent(resolved_agent_id)
         except Exception as exc:
             cleanup_errors.append(f"agent_delete_failed:{exc}")
 
+        if self.audit_service:
+            try:
+                if cleanup_errors:
+                    self.audit_service.log(
+                        "agent.delete.error",
+                        target=resolved_agent_id,
+                        details={"errors": cleanup_errors, "deleted": deleted},
+                        actor="supervisor",
+                    )
+                elif deleted:
+                    self.audit_service.log("agent.delete", target=resolved_agent_id, details={}, actor="supervisor")
+            except Exception as exc:
+                cleanup_errors.append(f"audit_failed:{exc}")
+
         if cleanup_errors:
             self._last_errors[resolved_agent_id] = " | ".join(cleanup_errors)
-            if self.audit_service:
-                self.audit_service.log(
-                    "agent.delete.error",
-                    target=resolved_agent_id,
-                    details={"errors": cleanup_errors, "deleted": deleted},
-                    actor="supervisor",
-                )
         else:
             self._last_errors.pop(resolved_agent_id, None)
 
-        if deleted and self.audit_service:
-            self.audit_service.log("agent.delete", target=resolved_agent_id, details={}, actor="supervisor")
         return deleted
 
     async def restart_all(self) -> SupervisorSnapshot:

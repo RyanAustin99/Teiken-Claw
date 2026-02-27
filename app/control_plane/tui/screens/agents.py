@@ -129,11 +129,16 @@ class AgentsScreen(BaseControlScreen):
     def _selected_agent(self):
         if self.table.row_count <= 0:
             return None
-        row = self.table.cursor_row
+        try:
+            row = self.table.cursor_row
+        except Exception:
+            row = 0
         if row is None:
             return None
         if row < 0 or row >= len(self._row_agent_ids):
-            return None
+            row = 0
+            if row >= len(self._row_agent_ids):
+                return None
         agent_id = self._row_agent_ids[row]
         return self.context.agent_service.get_agent(agent_id)
 
