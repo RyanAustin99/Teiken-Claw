@@ -18,6 +18,7 @@ import logging
 from sqlalchemy import and_, or_, func, inspect as sa_inspect, text
 from sqlalchemy.orm import Session as SQLAlchemySession
 
+from app.db.base import Base
 from app.db.session import get_db_session
 from app.memory.models import (
     Session, Thread, SessionMessage, ThreadSummary, 
@@ -38,7 +39,7 @@ class MemoryStore:
         Backfill new Phase 19 columns for legacy SQLite databases.
 
         Some tests and local runs reuse pre-migration DB files. Ensure
-        memory_records has `source` and `key` so ORM queries don't fail.
+        memory_records exists and has `source`/`key` so ORM queries don't fail.
         """
         try:
             bind = self._session.get_bind()
@@ -47,7 +48,11 @@ class MemoryStore:
 
             inspector = sa_inspect(bind)
             if "memory_records" not in inspector.get_table_names():
-                return
+                # Fresh environments may never have run init_db/migrations.
+                Base.metadata.create_all(bind=bind)
+                inspector = sa_inspect(bind)
+                if "memory_records" not in inspector.get_table_names():
+                    return
 
             columns = {c["name"] for c in inspector.get_columns("memory_records")}
             changed = False
