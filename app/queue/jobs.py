@@ -46,6 +46,7 @@ class JobType(str, Enum):
     Type of job - what kind of work it represents.
     """
     CHAT_MESSAGE = "chat_message"
+    SYSTEM_EVENT = "system_event"
     SCHEDULED_TASK = "scheduled_task"
     SUBAGENT_TASK = "subagent_task"
     MEMORY_SYNC = "memory_sync"

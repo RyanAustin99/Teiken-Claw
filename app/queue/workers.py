@@ -127,6 +127,7 @@ class WorkerPool:
     def _register_default_handlers(self) -> None:
         """Register default job handlers."""
         self.register_handler(JobType.CHAT_MESSAGE, self._handle_chat_message)
+        self.register_handler(JobType.SYSTEM_EVENT, self._handle_system_event)
     
     async def _handle_chat_message(self, job: Job) -> None:
         """
@@ -173,6 +174,23 @@ class WorkerPool:
                     "job_id": job.job_id,
                     "error_code": result.error_code,
                 }
+            )
+
+    async def _handle_system_event(self, job: Job) -> None:
+        """Handle system event jobs via the same runtime path."""
+        from app.agent.runtime import get_agent_runtime
+
+        runtime = self.agent_runtime or get_agent_runtime()
+        result = await runtime.run(job)
+        if not result.ok:
+            logger.warning(
+                "System event failed",
+                extra={
+                    "event": "system_event_failed",
+                    "job_id": job.job_id,
+                    "error_code": result.error_code,
+                    "error": result.error,
+                },
             )
     
     def register_handler(self, job_type: JobType, handler: JobHandler) -> None:

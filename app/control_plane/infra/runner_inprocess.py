@@ -64,6 +64,21 @@ class InProcessRunner(AgentRunner):
 
     def status(self) -> RunnerStatus:
         derived_status = self._status
+        active_states = {RuntimeStatus.RUNNING, RuntimeStatus.STARTING}
+        if self._worker_task is not None and self._worker_task.done() and self._status in active_states:
+            derived_status = RuntimeStatus.CRASHED
+            if self._last_error is None:
+                if self._worker_task.cancelled():
+                    self._last_error = "worker task cancelled"
+                else:
+                    exc = self._worker_task.exception()
+                    if exc:
+                        self._last_error = str(exc)
+        if self._heartbeat_task is not None and self._heartbeat_task.done() and self._status in active_states:
+            if derived_status == RuntimeStatus.RUNNING:
+                derived_status = RuntimeStatus.DEGRADED
+            if self._last_error is None and self._heartbeat_task.cancelled():
+                self._last_error = "heartbeat task cancelled"
         if self._status == RuntimeStatus.RUNNING and self._last_heartbeat_at:
             if datetime.utcnow() - self._last_heartbeat_at > timedelta(seconds=30):
                 derived_status = RuntimeStatus.DEGRADED

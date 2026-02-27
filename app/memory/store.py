@@ -13,8 +13,9 @@ from typing import Optional, List, Dict, Any, Union
 from datetime import datetime, timedelta
 
 import json
+import logging
 
-from sqlalchemy import and_, or_, func
+from sqlalchemy import and_, or_, func, inspect as sa_inspect, text
 from sqlalchemy.orm import Session as SQLAlchemySession
 
 from app.db.session import get_db_session
@@ -30,6 +31,48 @@ class MemoryStore:
     
     def __init__(self, session: Optional[SQLAlchemySession] = None):
         self._session = session or get_db_session()
+        self._ensure_phase19_columns()
+
+    def _ensure_phase19_columns(self) -> None:
+        """
+        Backfill new Phase 19 columns for legacy SQLite databases.
+
+        Some tests and local runs reuse pre-migration DB files. Ensure
+        memory_records has `source` and `key` so ORM queries don't fail.
+        """
+        try:
+            bind = self._session.get_bind()
+            if bind is None:
+                return
+
+            inspector = sa_inspect(bind)
+            if "memory_records" not in inspector.get_table_names():
+                return
+
+            columns = {c["name"] for c in inspector.get_columns("memory_records")}
+            changed = False
+
+            if "source" not in columns:
+                self._session.execute(
+                    text(
+                        "ALTER TABLE memory_records "
+                        "ADD COLUMN source VARCHAR(50) NOT NULL DEFAULT 'USER'"
+                    )
+                )
+                changed = True
+            if "key" not in columns:
+                self._session.execute(
+                    text('ALTER TABLE memory_records ADD COLUMN "key" VARCHAR(255)')
+                )
+                changed = True
+
+            if changed:
+                self._session.commit()
+        except Exception as exc:
+            self._session.rollback()
+            logging.getLogger(__name__).warning(
+                "Unable to backfill memory_records Phase 19 columns: %s", exc
+            )
     
     # =========================================================================
     # Session Management
@@ -179,6 +222,8 @@ class MemoryStore:
         content: str, 
         tags: Optional[List[str]] = None,
         scope: str = "user",
+        source: str = "USER",
+        key: Optional[str] = None,
         confidence: float = 0.0,
         metadata: Optional[Dict] = None,
         generate_embedding: bool = True
@@ -191,6 +236,8 @@ class MemoryStore:
             content: Memory content
             tags: Optional list of tags
             scope: Memory scope (user, global, project, thread)
+            source: Memory source (BOOT, USER, LLM_EXTRACTOR, ADMIN_EDIT)
+            key: Optional semantic key for targeted updates
             confidence: Confidence score (0.0-1.0)
             metadata: Optional metadata dictionary
             generate_embedding: Whether to generate embedding for the memory
@@ -203,14 +250,20 @@ class MemoryStore:
             content=content,
             tags=tags,
             scope=scope,
+            source=source,
+            key=key,
             confidence=confidence,
         )
         self._session.add(memory)
-        self._session.commit()
-        self._session.refresh(memory)
+        try:
+            self._session.commit()
+            self._session.refresh(memory)
+        except Exception:
+            self._session.rollback()
+            raise
         
         # Create audit record
-        self.audit_memory(memory.id, "created", "Initial creation")
+        self.audit_memory(memory.id, "create", "Initial creation")
         
         # Generate embedding if requested
         if generate_embedding:
@@ -288,7 +341,7 @@ class MemoryStore:
             self._session.refresh(memory)
             
             # Create audit record
-            self.audit_memory(memory.id, "updated", "Manual update")
+            self.audit_memory(memory.id, "update", "Manual update")
         return memory
     
     def delete_memory(self, memory_id: int, reason: Optional[str] = None) -> bool:
@@ -299,7 +352,7 @@ class MemoryStore:
             self._session.commit()
             
             # Create audit record
-            self.audit_memory(memory_id, "deleted", reason or "Manual deletion")
+            self.audit_memory(memory_id, "delete", reason or "Manual deletion")
             return True
         return False
     
@@ -419,9 +472,15 @@ class MemoryStore:
     
     def audit_memory(self, memory_id: int, action: str, reason: Optional[str] = None) -> MemoryAudit:
         """Create an audit record for a memory."""
+        normalized = (action or "").strip().lower()
+        normalized = {
+            "created": "create",
+            "updated": "update",
+            "deleted": "delete",
+        }.get(normalized, normalized)
         audit = MemoryAudit(
             memory_id=memory_id,
-            action=action,
+            action=normalized,
             reason=reason
         )
         self._session.add(audit)

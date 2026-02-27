@@ -26,6 +26,7 @@ from pydantic import BaseModel
 
 from app.config.logging import get_logger
 from app.config.settings import settings
+from app.agent.boot_linter import lint_boot_message
 from app.agent.ollama_client import OllamaClient, ChatResponse, get_ollama_client
 from app.agent.errors import (
     OllamaError,
@@ -34,7 +35,9 @@ from app.agent.errors import (
     is_retryable_error,
 )
 from app.agent.context_builder import ContextBuilder, get_context_builder
-from app.queue.jobs import Job
+from app.interfaces.tc_profile_strip import extract_tc_profile
+from app.queue.jobs import Job, JobType
+from app.soul.boot_policy import DEFAULT_BOOT_DIRECTIVES
 from app.tools.base import ToolResult
 from app.tools.executor import ToolExecutionContext, ToolExecutor
 from app.tools.loop import run_tool_loop
@@ -46,6 +49,16 @@ from app.memory.thread_state import get_thread_state
 from app.memory.extraction_rules import get_extraction_rules
 
 logger = get_logger(__name__)
+
+FRESH_BOOT_SYSTEM_BLOCK = (
+    "You are speaking directly to the user. Speak in first person (I/me). "
+    "Never use meta AI phrasing. Keep the first message natural, short, and conversational. "
+    "No lists or headings. Ask at most two short questions."
+)
+
+OUTPUT_FORMAT_BLOCK = (
+    "Output must start with <tc_profile>{JSON}</tc_profile>, then a blank line, then visible message."
+)
 
 
 # Constants
@@ -173,6 +186,10 @@ class AgentRuntime:
                 "chat_id": job.chat_id,
             }
         )
+
+        job_type = JobType(job.type) if isinstance(job.type, str) else job.type
+        if job_type == JobType.SYSTEM_EVENT:
+            return await self._run_system_event(job)
         
         # Check for skill trigger (Phase 10)
         skill_result = await self._check_skill_trigger(job)
@@ -315,6 +332,44 @@ class AgentRuntime:
             tool_results=[item.model_dump(exclude_none=True) for item in tool_events],
             metadata={"turns": loop_result.turns},
         )
+
+    async def _run_system_event(self, job: Job) -> AgentResult:
+        subtype = str((job.payload or {}).get("event_subtype") or "").upper()
+        if subtype != "HATCH_BOOT":
+            return AgentResult(
+                ok=False,
+                error=f"Unsupported system event subtype: {subtype or '<missing>'}",
+                error_code="UNSUPPORTED_SYSTEM_EVENT",
+            )
+        model = (job.payload or {}).get("model")
+        directives = (job.payload or {}).get("boot_directives") or DEFAULT_BOOT_DIRECTIVES
+        messages = [
+            {"role": "system", "content": FRESH_BOOT_SYSTEM_BLOCK},
+            {"role": "system", "content": directives},
+            {"role": "system", "content": OUTPUT_FORMAT_BLOCK},
+            {"role": "user", "content": "You've just been hatched. Send your first message now."},
+        ]
+        try:
+            response = await self._call_ollama_with_retry(messages=messages, tools=None)
+            raw = response.message.content or ""
+            _, visible, _ = extract_tc_profile(raw)
+            visible = visible.strip() or raw.strip()
+            problems = lint_boot_message(visible, settings)
+            if problems:
+                return AgentResult(
+                    ok=False,
+                    error="Boot message lint failed",
+                    error_code="BOOT_LINT_FAILED",
+                    metadata={"problems": problems},
+                )
+            return AgentResult(ok=True, response=visible, metadata={"event_subtype": subtype})
+        except Exception as exc:
+            return AgentResult(
+                ok=False,
+                error=str(exc),
+                error_code="SYSTEM_EVENT_ERROR",
+                metadata={"event_subtype": subtype},
+            )
     
     async def _build_initial_context(self, job: Job) -> List[Dict[str, Any]]:
         """
