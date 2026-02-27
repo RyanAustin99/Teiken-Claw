@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -35,6 +35,12 @@ class OnboardingStatus(str, Enum):
     COMPLETE = "complete"
 
 
+class AgentOnboardingState(str, Enum):
+    NEW = "NEW"
+    WAITING_USER_PREFS = "WAITING_USER_PREFS"
+    ACTIVE = "ACTIVE"
+
+
 class AppConfig(BaseModel):
     """Persisted control-plane user config (small, non-secret)."""
 
@@ -58,7 +64,7 @@ class AppConfig(BaseModel):
     tool_call_timeout_sec: int = 30
 
 
-class AgentOnboardingState(BaseModel):
+class AgentOnboardingProfile(BaseModel):
     user_name: Optional[str] = None
     preferred_agent_name: Optional[str] = None
     purpose: Optional[str] = None
@@ -97,6 +103,11 @@ class AgentRecord(BaseModel):
     onboarding_complete: bool = False
     onboarding_updated_at: Optional[datetime] = None
     prompt_template_version: str = "1.0.0"
+    is_fresh: bool = True
+    onboarding_state: AgentOnboardingState = AgentOnboardingState.NEW
+    profile_json: Optional[Dict[str, Any]] = None
+    boot_directives: Optional[str] = None
+    degraded_reason: Optional[str] = None
 
 
 class SessionRecord(BaseModel):

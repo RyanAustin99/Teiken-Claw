@@ -145,6 +145,17 @@ class HatchScreen(BaseControlScreen):
                 details={"name": agent.name, "tool_profile": tool_profile, "session_id": session.id},
                 actor="tui",
             )
+            try:
+                await self.context.runtime_supervisor.trigger_hatch_boot(
+                    agent_id=agent.id,
+                    session_id=session.id,
+                    user_metadata={},
+                )
+            except Exception as boot_exc:
+                self._safe_set_status(agent.id, RuntimeStatus.DEGRADED, f"boot_failed: {boot_exc}")
+                self.status_box.update("Agent started, but first-message boot failed. Check logs and retry.")
+                self._hatch_in_flight = False
+                return
             self.status_box.update(
                 sanitize_terminal_text(f"[OK] Agent created + started: {agent.name}\nSession: {session.id}")
             )

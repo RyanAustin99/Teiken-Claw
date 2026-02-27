@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import sqlite3
+import json
 from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 from uuid import uuid4
 
-from app.control_plane.domain.models import AgentRecord, RunnerType, RuntimeStatus
+from app.control_plane.domain.models import AgentOnboardingState, AgentRecord, RunnerType, RuntimeStatus
 
 
 def _utcnow() -> str:
@@ -55,7 +56,12 @@ class AgentRepository:
                     agent_profile_purpose TEXT,
                     onboarding_complete INTEGER NOT NULL DEFAULT 0,
                     onboarding_updated_at TEXT,
-                    prompt_template_version TEXT NOT NULL DEFAULT '1.0.0'
+                    prompt_template_version TEXT NOT NULL DEFAULT '1.0.0',
+                    is_fresh INTEGER NOT NULL DEFAULT 1,
+                    onboarding_state TEXT NOT NULL DEFAULT 'NEW',
+                    profile_json TEXT,
+                    boot_directives TEXT,
+                    degraded_reason TEXT
                 )
                 """
             )
@@ -72,11 +78,28 @@ class AgentRepository:
             "onboarding_complete": "INTEGER NOT NULL DEFAULT 0",
             "onboarding_updated_at": "TEXT",
             "prompt_template_version": "TEXT NOT NULL DEFAULT '1.0.0'",
+            "is_fresh": "INTEGER NOT NULL DEFAULT 1",
+            "onboarding_state": "TEXT NOT NULL DEFAULT 'NEW'",
+            "profile_json": "TEXT",
+            "boot_directives": "TEXT",
+            "degraded_reason": "TEXT",
         }
         for column, definition in required.items():
             if column in existing:
                 continue
             conn.execute(f"ALTER TABLE agents ADD COLUMN {column} {definition}")
+
+    @staticmethod
+    def _decode_profile_json(raw: Optional[str]) -> Optional[dict]:
+        if not raw:
+            return None
+        try:
+            data = json.loads(raw)
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            return None
+        return None
 
     @staticmethod
     def _row_to_agent(row: sqlite3.Row) -> AgentRecord:
@@ -105,6 +128,13 @@ class AgentRepository:
             if row["onboarding_updated_at"]
             else None,
             prompt_template_version=row["prompt_template_version"] or "1.0.0",
+            is_fresh=bool(row["is_fresh"]) if "is_fresh" in row.keys() else True,
+            onboarding_state=AgentOnboardingState(row["onboarding_state"] or AgentOnboardingState.NEW.value)
+            if "onboarding_state" in row.keys()
+            else AgentOnboardingState.NEW,
+            profile_json=AgentRepository._decode_profile_json(row["profile_json"]) if "profile_json" in row.keys() else None,
+            boot_directives=row["boot_directives"] if "boot_directives" in row.keys() else None,
+            degraded_reason=row["degraded_reason"] if "degraded_reason" in row.keys() else None,
         )
 
     def create(
@@ -130,8 +160,9 @@ class AgentRepository:
                     created_at, updated_at, status, last_error, last_seen_at,
                     is_default, runner_type, auto_restart, max_queue_depth, tool_profile_version,
                     agent_profile_user_name, agent_profile_agent_name, agent_profile_purpose,
-                    onboarding_complete, onboarding_updated_at, prompt_template_version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    onboarding_complete, onboarding_updated_at, prompt_template_version,
+                    is_fresh, onboarding_state, profile_json, boot_directives, degraded_reason
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     agent_id,
@@ -156,6 +187,11 @@ class AgentRepository:
                     0,
                     None,
                     prompt_template_version,
+                    1,
+                    AgentOnboardingState.NEW.value,
+                    None,
+                    None,
+                    None,
                 ),
             )
             conn.commit()
@@ -204,6 +240,11 @@ class AgentRepository:
             "onboarding_complete",
             "onboarding_updated_at",
             "prompt_template_version",
+            "is_fresh",
+            "onboarding_state",
+            "profile_json",
+            "boot_directives",
+            "degraded_reason",
         }
         keys = [key for key in patch.keys() if key in allowed]
         if not keys:
@@ -217,10 +258,20 @@ class AgentRepository:
                 value = value.value
             if isinstance(value, RunnerType):
                 value = value.value
+            if isinstance(value, AgentOnboardingState):
+                value = value.value
             if isinstance(value, bool):
                 value = 1 if value else 0
             if isinstance(value, datetime):
                 value = value.isoformat()
+            if key == "profile_json":
+                if value is None:
+                    value = None
+                elif isinstance(value, str):
+                    # keep existing string payload as-is if already serialized
+                    value = value
+                else:
+                    value = json.dumps(value, ensure_ascii=False)
             values.append(value)
         values.append(_utcnow())
         values.append(agent_id)

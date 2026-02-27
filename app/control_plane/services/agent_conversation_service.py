@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import json
+from datetime import datetime
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from app.config.logging import get_logger
+from app.config.settings import settings
 from app.control_plane.domain.errors import ValidationError
-from app.control_plane.domain.models import AgentRecord, OnboardingStatus
+from app.control_plane.domain.models import AgentOnboardingState, AgentRecord, OnboardingStatus
+from app.interfaces.tc_profile_strip import extract_tc_profile
+from app.memory.onboarding_extractor import extract_onboarding_prefs, parse_llm_onboarding_json
+from app.memory.store import get_memory_store
 from app.control_plane.services.agent_prompt_template_service import AgentPromptTemplateService
 from app.control_plane.services.agent_service import AgentService
 from app.control_plane.services.audit_service import AuditService
@@ -19,6 +26,8 @@ from app.tools.executor import ToolExecutionContext, ToolExecutor
 from app.tools.loop import run_tool_loop
 from app.tools.protocol import ToolResultEnvelope
 from app.tools.registry import get_tool_registry
+
+logger = get_logger(__name__)
 
 
 TOOL_PROFILE_CAPABILITIES: Dict[str, List[str]] = {
@@ -71,6 +80,7 @@ class AgentConversationService:
         self.session_service = session_service
         self.prompt_template_service = prompt_template_service
         self.audit_service = audit_service
+        self.memory_store = get_memory_store()
         self.tool_registry = get_tool_registry()
         existing_tools = set(self.tool_registry.list_tools())
         required = {"files.write", "files.read", "files.list", "files.exists"}
@@ -104,9 +114,8 @@ class AgentConversationService:
                 details={"session_id": session_id, "agent_id": agent.id},
             )
 
-        onboarding_response = self._handle_onboarding(agent_id=agent.id, session_id=session.id, message=user_message)
-        if onboarding_response is not None:
-            return ConversationResponse(response=onboarding_response)
+        await self._maybe_process_onboarding_reply(agent=agent, session=session, message=user_message)
+        agent = self.agent_service.get_agent(agent.id) or agent
 
         cfg = self.config_service.load().values
         capability_lines = TOOL_PROFILE_CAPABILITIES.get(agent.tool_profile, TOOL_PROFILE_CAPABILITIES["safe"])
@@ -153,53 +162,170 @@ class AgentConversationService:
             execution_context=context,
             max_tool_turns_per_request=max(1, cfg.max_tool_turns_per_request),
         )
-        return ConversationResponse(
-            response=loop_result.final_response,
-            tool_events=loop_result.tool_events,
+        visible_response = loop_result.final_response or ""
+        _, stripped, _ = extract_tc_profile(visible_response)
+        visible_response = stripped.strip() or visible_response
+        visible_response = await self._enforce_first_person(visible_response, model=agent.model)
+        return ConversationResponse(response=visible_response, tool_events=loop_result.tool_events)
+
+    async def _maybe_process_onboarding_reply(self, *, agent: AgentRecord, session, message: str) -> None:
+        if agent.onboarding_state != AgentOnboardingState.WAITING_USER_PREFS:
+            return
+        user_text = (message or "").strip()
+        if not user_text:
+            return
+
+        transcript = self.session_service.get_transcript(session.id)
+        last_assistant = ""
+        for item in reversed(transcript):
+            if item.role == "assistant":
+                last_assistant = item.content
+                break
+
+        deterministic = extract_onboarding_prefs(
+            user_text=user_text,
+            last_assistant_text=last_assistant,
+            agent_profile_json=agent.profile_json,
+        )
+        extracted = dict(deterministic)
+        source = "USER" if any(value for value in deterministic.values()) else "LLM_EXTRACTOR"
+        if not self._has_onboarding_value(extracted):
+            fallback = await self._llm_extract_onboarding_prefs(
+                user_text=user_text,
+                last_assistant_text=last_assistant,
+                model=agent.model,
+            )
+            for key, value in fallback.items():
+                if not extracted.get(key) and value:
+                    extracted[key] = value
+
+        if not self._has_onboarding_value(extracted):
+            return
+
+        logger.info(
+            "Onboarding preferences extracted",
+            extra={
+                "event": "onboarding_prefs_extracted",
+                "agent_id": agent.id,
+                "fields": sorted([key for key, value in extracted.items() if value]),
+            },
         )
 
-    def _handle_onboarding(self, agent_id: str, session_id: str, message: str) -> Optional[str]:
-        agent = self.agent_service.get_agent(agent_id)
-        session = self.session_service.get_session(session_id)
-        if not agent or not session:
-            return None
+        try:
+            self.memory_store.create_memory(
+                memory_type="semantic",
+                content=json.dumps(extracted, ensure_ascii=False),
+                scope=f"agent:{agent.id}",
+                source=source,
+                key="user_prefs",
+                confidence=0.85,
+                metadata={"scope": "USER_PREFS", "session_id": session.id},
+            )
+        except Exception:
+            logger.exception(
+                "Failed to persist onboarding prefs memory",
+                extra={"agent_id": agent.id, "session_id": session.id},
+            )
 
-        if agent.onboarding_complete:
-            if session.onboarding_status != OnboardingStatus.COMPLETE:
-                self.session_service.update_onboarding(session_id, OnboardingStatus.COMPLETE, step=3)
-            return None
+        profile_json = dict(agent.profile_json or {})
+        patch: Dict[str, object] = {}
+        user_name = extracted.get("user_preferred_name")
+        agent_name = extracted.get("agent_name_preference")
+        purpose = extracted.get("agent_purpose")
+        tone = extracted.get("tone_preference")
 
-        if session.onboarding_status == OnboardingStatus.PENDING:
-            self.session_service.update_onboarding(session_id, OnboardingStatus.IN_PROGRESS, step=1)
-            return "Before we continue: what name should I call you?"
+        if user_name:
+            patch["agent_profile_user_name"] = user_name
+        if agent_name:
+            patch["agent_profile_agent_name"] = agent_name
+            profile_json["agent_display_name"] = agent_name
+        if purpose:
+            patch["agent_profile_purpose"] = purpose
+        if tone:
+            profile_json["tone_preference"] = tone
+        if profile_json:
+            patch["profile_json"] = profile_json
 
-        if session.onboarding_status != OnboardingStatus.IN_PROGRESS:
-            self.session_service.update_onboarding(session_id, OnboardingStatus.IN_PROGRESS, step=1)
-            return "Let us finish setup first. What name should I call you?"
+        if user_name or agent_name or purpose:
+            patch["is_fresh"] = False
+            patch["onboarding_state"] = AgentOnboardingState.ACTIVE
+            patch["onboarding_complete"] = True
+            patch["onboarding_updated_at"] = datetime.utcnow().isoformat()
+            self.session_service.update_onboarding(session.id, OnboardingStatus.COMPLETE, step=3)
+        else:
+            patch["onboarding_complete"] = False
+            patch["onboarding_updated_at"] = datetime.utcnow().isoformat()
+            self.session_service.update_onboarding(session.id, OnboardingStatus.IN_PROGRESS, step=1)
 
-        answer = message.strip()
-        if not answer:
-            return "I did not catch that. Please provide a short answer."
+        if patch:
+            try:
+                self.agent_service.update_agent(agent.id, patch)
+            except Exception:
+                logger.exception("Failed to update agent onboarding prefs", extra={"agent_id": agent.id})
 
-        step = session.onboarding_step
-        if step <= 1:
-            self.agent_service.update_onboarding_profile(agent_id, user_name=answer, complete=False)
-            self.session_service.update_onboarding(session_id, OnboardingStatus.IN_PROGRESS, step=2)
-            return f"Great, {answer}. What would you like this agent to be called?"
+    async def _llm_extract_onboarding_prefs(
+        self,
+        *,
+        user_text: str,
+        last_assistant_text: str,
+        model: Optional[str],
+    ) -> Dict[str, Optional[str]]:
+        prompt = (
+            "Extract onboarding preferences from the user message. "
+            "Return JSON only with keys: user_preferred_name, agent_name_preference, agent_purpose, tone_preference. "
+            "Use null when uncertain."
+        )
+        try:
+            raw = await self.model_service.chat_messages(
+                messages=[
+                    {"role": "system", "content": prompt},
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Assistant message:\n{last_assistant_text}\n\n"
+                            f"User message:\n{user_text}\n"
+                        ),
+                    },
+                ],
+                model=model,
+            )
+            parsed = parse_llm_onboarding_json(raw)
+            return parsed
+        except Exception:
+            return {
+                "user_preferred_name": None,
+                "agent_name_preference": None,
+                "agent_purpose": None,
+                "tone_preference": None,
+            }
 
-        if step == 2:
-            patch: Dict[str, object] = {"agent_profile_agent_name": answer}
-            if answer and answer != agent.name:
-                patch["name"] = answer
-            self.agent_service.update_agent(agent_id, patch)
-            self.session_service.update_onboarding(session_id, OnboardingStatus.IN_PROGRESS, step=3)
-            return "Got it. What is my primary purpose for you? (one short paragraph)"
+    async def _enforce_first_person(self, text: str, *, model: Optional[str]) -> str:
+        if "this agent" not in (text or "").lower():
+            return text
+        try:
+            rewritten = await self.model_service.chat_messages(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Rewrite in first person. Replace any third-person self-reference ('this agent') with 'I/me'.",
+                    },
+                    {"role": "user", "content": text},
+                ],
+                model=model,
+            )
+            if rewritten and "this agent" not in rewritten.lower():
+                return rewritten
+        except Exception:
+            pass
+        return text.replace("this agent", "I").replace("This agent", "I")
 
-        self.agent_service.update_onboarding_profile(agent_id, purpose=answer, complete=True)
-        self.session_service.update_onboarding(session_id, OnboardingStatus.COMPLETE, step=3)
-        return (
-            "Onboarding complete. I understand my role, workspace, tools, and skills context. "
-            "Tell me the first task you want me to execute."
+    @staticmethod
+    def _has_onboarding_value(payload: Dict[str, Optional[str]]) -> bool:
+        return bool(
+            payload.get("user_preferred_name")
+            or payload.get("agent_name_preference")
+            or payload.get("agent_purpose")
+            or payload.get("tone_preference")
         )
 
     def _resolve_tools(self, tool_profile: str) -> List[str]:

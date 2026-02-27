@@ -311,6 +311,21 @@ class TuiCommandRouter:
                 self.active_agent_id = agent.id
                 self.active_session_id = session.id
                 lines.append(f"Started runtime and opened chat session: {session.id}")
+                try:
+                    boot_message = await self.context.runtime_supervisor.trigger_hatch_boot(
+                        agent_id=agent.id,
+                        session_id=session.id,
+                        user_metadata={},
+                    )
+                    preview = boot_message.strip().splitlines()[0][:120] if boot_message.strip() else ""
+                    if preview:
+                        lines.append(f"Boot: {preview}")
+                except Exception as boot_exc:
+                    self.context.agent_service.update_agent(
+                        agent.id,
+                        {"degraded_reason": f"boot_failed: {boot_exc}", "status": RuntimeStatus.DEGRADED},
+                    )
+                    lines.append("First message boot failed. Agent marked degraded.")
             except Exception as exc:
                 self.context.agent_service.set_status(agent.id, status=RuntimeStatus.CRASHED, last_error=str(exc))
                 lines.append("Runtime start failed. Agent kept as crashed.")

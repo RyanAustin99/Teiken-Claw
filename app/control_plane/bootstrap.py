@@ -20,6 +20,7 @@ from app.control_plane.services.agent_prompt_template_service import AgentPrompt
 from app.control_plane.services.audit_service import AuditService
 from app.control_plane.services.config_service import ConfigService
 from app.control_plane.services.doctor_service import DoctorService
+from app.control_plane.services.hatch_boot_service import HatchBootService
 from app.control_plane.services.log_service import LogService
 from app.control_plane.services.model_service import ModelService
 from app.control_plane.services.runtime_supervisor import RuntimeSupervisor
@@ -36,6 +37,7 @@ class ControlPlaneContext:
     agent_service: AgentService
     session_service: SessionService
     conversation_service: AgentConversationService
+    hatch_boot_service: HatchBootService
     runtime_supervisor: RuntimeSupervisor
     log_service: LogService
     doctor_service: DoctorService
@@ -69,6 +71,11 @@ def build_context(cli_data_dir: Optional[str] = None) -> ControlPlaneContext:
         prompt_template_service=prompt_template_service,
         audit_service=audit_service,
     )
+    hatch_boot_service = HatchBootService(
+        model_service=model_service,
+        agent_service=agent_service,
+        session_service=session_service,
+    )
     server_manager = ServerProcessManager(
         pid_file=paths.server_pid_file,
         host=config_service.load().values.dev_server_host,
@@ -78,6 +85,7 @@ def build_context(cli_data_dir: Optional[str] = None) -> ControlPlaneContext:
         config_service=config_service,
         model_service=model_service,
         conversation_service=conversation_service,
+        hatch_boot_service=hatch_boot_service,
         agent_service=agent_service,
         session_service=session_service,
         server_process_manager=server_manager,
@@ -100,6 +108,7 @@ def build_context(cli_data_dir: Optional[str] = None) -> ControlPlaneContext:
         agent_service=agent_service,
         session_service=session_service,
         conversation_service=conversation_service,
+        hatch_boot_service=hatch_boot_service,
         runtime_supervisor=runtime_supervisor,
         log_service=log_service,
         doctor_service=doctor_service,

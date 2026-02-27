@@ -2,46 +2,85 @@ import asyncio
 from pathlib import Path
 
 from app.control_plane.bootstrap import build_context
+from app.control_plane.domain.models import AgentOnboardingState
 from app.control_plane.domain.models import OnboardingStatus
+from app.memory.store import get_memory_store
 
 
 def _run(coro):
     return asyncio.run(coro)
 
 
-def test_onboarding_state_machine_and_profile_persistence(tmp_path):
+def test_onboarding_reply_extraction_transitions_agent_active(tmp_path):
     context = build_context(cli_data_dir=str(tmp_path / "cp_data"))
     agent = context.agent_service.create_agent(name="onboard-agent")
     session = context.session_service.new_session(agent.id, title="chat")
+    context.agent_service.update_agent(
+        agent.id,
+        {
+            "is_fresh": True,
+            "onboarding_state": AgentOnboardingState.WAITING_USER_PREFS,
+            "profile_json": {
+                "agent_display_name": "Onboard",
+                "agent_voice": ["calm", "direct"],
+                "agent_principles": ["be useful", "be concise", "be honest"],
+            },
+        },
+    )
+    context.session_service.append_assistant_message(
+        session.id,
+        "Hey, what should I call you and what should I call myself?",
+    )
 
-    first = _run(context.conversation_service.generate_response(agent.id, session.id, "hello"))
-    assert "what name should i call you" in first.lower()
-    session = context.session_service.get_session(session.id)
-    assert session is not None
-    assert session.onboarding_status == OnboardingStatus.IN_PROGRESS
-    assert session.onboarding_step == 1
+    async def _fake_chat_messages(messages, model=None, tools=None):
+        return "Perfect, I’m ready."
 
-    second = _run(context.conversation_service.generate_response(agent.id, session.id, "Ryan"))
-    assert "what would you like this agent to be called" in second.lower()
-    agent = context.agent_service.get_agent(agent.id)
-    assert agent is not None
-    assert agent.agent_profile_user_name == "Ryan"
+    context.model_service.chat_messages = _fake_chat_messages
+    response = _run(
+        context.conversation_service.generate_response(
+            agent.id,
+            session.id,
+            "Call me Ryan, call yourself Forge, and your job is to automate my workflow.",
+        )
+    )
+    assert "ready" in response.lower()
 
-    third = _run(context.conversation_service.generate_response(agent.id, session.id, "Forge"))
-    assert "primary purpose" in third.lower()
-    renamed = context.agent_service.get_agent(agent.id)
-    assert renamed is not None
-    assert renamed.name == "Forge"
-
-    fourth = _run(context.conversation_service.generate_response(agent.id, session.id, "Automation and debugging"))
-    assert "onboarding complete" in fourth.lower()
-    done_agent = context.agent_service.get_agent(agent.id)
-    assert done_agent is not None
-    assert done_agent.onboarding_complete is True
-    assert done_agent.agent_profile_purpose == "Automation and debugging"
     done_session = context.session_service.get_session(session.id)
     assert done_session is not None
     assert done_session.onboarding_status == OnboardingStatus.COMPLETE
+
+    done_agent = context.agent_service.get_agent(agent.id)
+    assert done_agent is not None
+    assert done_agent.is_fresh is False
+    assert done_agent.onboarding_state == AgentOnboardingState.ACTIVE
+    assert done_agent.onboarding_complete is True
+    assert done_agent.agent_profile_user_name == "Ryan"
+    assert done_agent.agent_profile_agent_name == "Forge"
+    assert "automate my workflow" in (done_agent.agent_profile_purpose or "").lower()
+
+    memories = get_memory_store().list_memories(scope=f"agent:{agent.id}", limit=100)
+    prefs = [m for m in memories if getattr(m, "key", None) == "user_prefs"]
+    assert prefs, "expected USER_PREFS memory record"
+
+
+def test_conversation_rewrites_third_person_self_reference(tmp_path):
+    context = build_context(cli_data_dir=str(tmp_path / "cp_data"))
+    agent = context.agent_service.create_agent(name="first-person-agent")
+    session = context.session_service.new_session(agent.id, title="chat")
+    context.agent_service.update_agent(
+        agent.id,
+        {"is_fresh": False, "onboarding_state": AgentOnboardingState.ACTIVE},
+    )
+
+    outputs = iter(["this agent can help you.", "I can help you."])
+
+    async def _fake_chat_messages(messages, model=None, tools=None):
+        return next(outputs)
+
+    context.model_service.chat_messages = _fake_chat_messages
+    result = _run(context.conversation_service.generate_response(agent.id, session.id, "hello"))
+    assert "i can help you" in result.lower()
+    assert "this agent" not in result.lower()
 
 
 def test_conversation_uses_system_prompt_after_onboarding(tmp_path):
@@ -55,6 +94,7 @@ def test_conversation_uses_system_prompt_after_onboarding(tmp_path):
         purpose="Ship production fixes quickly",
         complete=True,
     )
+    context.agent_service.update_agent(agent.id, {"is_fresh": False, "onboarding_state": AgentOnboardingState.ACTIVE})
     context.session_service.update_onboarding(session.id, status=OnboardingStatus.COMPLETE, step=3)
 
     captured = {}
@@ -87,6 +127,7 @@ def test_conversation_executes_tool_envelope_and_writes_file(tmp_path):
         purpose="Create files",
         complete=True,
     )
+    context.agent_service.update_agent(agent.id, {"is_fresh": False, "onboarding_state": AgentOnboardingState.ACTIVE})
     context.session_service.update_onboarding(session.id, status=OnboardingStatus.COMPLETE, step=3)
 
     outputs = iter(
@@ -126,6 +167,7 @@ def test_conversation_does_not_execute_markdown_code_fence_tool_text(tmp_path):
         purpose="Test",
         complete=True,
     )
+    context.agent_service.update_agent(agent.id, {"is_fresh": False, "onboarding_state": AgentOnboardingState.ACTIVE})
     context.session_service.update_onboarding(session.id, status=OnboardingStatus.COMPLETE, step=3)
 
     async def _fake_chat_messages(messages, model=None, tools=None):
@@ -150,6 +192,7 @@ def test_conversation_denies_disallowed_tool_profile(tmp_path):
         purpose="Test denial",
         complete=True,
     )
+    context.agent_service.update_agent(agent.id, {"is_fresh": False, "onboarding_state": AgentOnboardingState.ACTIVE})
     context.session_service.update_onboarding(session.id, status=OnboardingStatus.COMPLETE, step=3)
 
     outputs = iter(

@@ -169,6 +169,8 @@ class MemoryRecord(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     tags: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
     scope: Mapped[str] = mapped_column(String(50), default="global", nullable=False)
+    source: Mapped[str] = mapped_column(String(50), default="USER", nullable=False)
+    key: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     confidence: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
@@ -185,6 +187,7 @@ class MemoryRecord(Base):
     
     __table_args__ = (
         Index("ix_memory_records_type_scope", "memory_type", "scope"),
+        Index("ix_memory_records_scope_source", "scope", "source"),
         Index("ix_memory_records_created", "created_at"),
         CheckConstraint(
             "memory_type IN ('episodic', 'semantic', 'procedural', 'working')",

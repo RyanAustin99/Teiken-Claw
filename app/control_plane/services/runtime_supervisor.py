@@ -16,6 +16,7 @@ from app.control_plane.services.agent_service import AgentService
 from app.control_plane.services.agent_conversation_service import AgentConversationService
 from app.control_plane.services.audit_service import AuditService
 from app.control_plane.services.config_service import ConfigService
+from app.control_plane.services.hatch_boot_service import HatchBootService
 from app.control_plane.services.model_service import ModelService
 from app.control_plane.services.session_service import SessionService
 from app.tools.protocol import render_tool_result
@@ -29,6 +30,7 @@ class RuntimeSupervisor:
         config_service: ConfigService,
         model_service: ModelService,
         conversation_service: AgentConversationService,
+        hatch_boot_service: HatchBootService,
         agent_service: AgentService,
         session_service: SessionService,
         server_process_manager: ServerProcessManager,
@@ -37,6 +39,7 @@ class RuntimeSupervisor:
         self.config_service = config_service
         self.model_service = model_service
         self.conversation_service = conversation_service
+        self.hatch_boot_service = hatch_boot_service
         self.agent_service = agent_service
         self.session_service = session_service
         self.server_process_manager = server_process_manager
@@ -166,6 +169,14 @@ class RuntimeSupervisor:
 
     async def chat(self, agent_id: str, session_id: str, message: str) -> str:
         runner = self._runners.get(agent_id)
+        if runner:
+            runner_status = runner.status().status
+            if runner_status != RuntimeStatus.RUNNING:
+                # Runners can become stale across loop boundaries in tests/CLI hops.
+                # Drop stale handles and let start_agent recreate a healthy runner.
+                self._runners.pop(agent_id, None)
+                self.agent_service.set_status(agent_id, RuntimeStatus.STOPPED)
+                runner = None
         if not runner:
             await self.start_agent(agent_id)
             runner = self._runners[agent_id]
@@ -173,6 +184,22 @@ class RuntimeSupervisor:
         response = await runner.send_message(message, session_id=session_id)
         self.session_service.append_assistant_message(session_id, response)
         return response
+
+    async def trigger_hatch_boot(
+        self,
+        *,
+        agent_id: str,
+        session_id: str,
+        user_metadata: Optional[Dict[str, str]] = None,
+        overwrite_profile: bool = True,
+    ) -> str:
+        """Generate and persist the proactive first boot message."""
+        return await self.hatch_boot_service.run_boot(
+            agent_id=agent_id,
+            session_id=session_id,
+            user_metadata=user_metadata,
+            overwrite_profile=overwrite_profile,
+        )
 
     def snapshot(self) -> SupervisorSnapshot:
         server_status = self.server_process_manager.status()

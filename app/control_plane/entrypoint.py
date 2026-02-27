@@ -385,6 +385,21 @@ def hatch_command(
         console.print("Agent was kept with crashed status. Use `teiken doctor` and `teiken agents restart <id>`.")
         return
     session = cp.session_service.new_session(agent.id, title=f"{agent.name} session")
+    try:
+        boot_message = _run_async(
+            cp.runtime_supervisor.trigger_hatch_boot(
+                agent_id=agent.id,
+                session_id=session.id,
+                user_metadata={},
+            )
+        )
+    except Exception as boot_exc:
+        cp.agent_service.update_agent(
+            agent.id,
+            {"degraded_reason": f"boot_failed: {boot_exc}", "status": RuntimeStatus.DEGRADED},
+        )
+        console.print(f"[yellow]First message boot failed:[/yellow] {boot_exc}")
+        boot_message = ""
     cp.audit_service.log(
         "agent.hatch",
         target=agent.id,
@@ -393,6 +408,8 @@ def hatch_command(
     )
     console.print(f"Hatched agent: {agent.name} ({agent.id})")
     console.print(f"Session: {session.id}")
+    if boot_message:
+        console.print(f"Boot: {boot_message}")
     if not no_chat and typer.confirm("Enter chat now?", default=True):
         _chat_loop(cp, agent.id, session.id)
 

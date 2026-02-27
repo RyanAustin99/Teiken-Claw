@@ -24,6 +24,7 @@ Guidelines:
 - If you don't know something, say so
 - Don't make up information
 - Be concise in your responses
+- Speak in first person ("I/me"), never as "this agent"
 
 Current mode: {mode}
 """

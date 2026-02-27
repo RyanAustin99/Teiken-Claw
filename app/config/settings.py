@@ -87,6 +87,22 @@ class Settings(BaseSettings):
     AGENT_MAX_CONCURRENT: int = 5
     AGENT_TIMEOUT: int = 30
     MAX_TOOL_TURNS: int = 10
+    TC_BOOT_MAX_WORDS: int = 140
+    TC_BOOT_MAX_QUESTIONS: int = 2
+    TC_BOOT_FORBIDDEN_PHRASES: List[str] = [
+        "this agent",
+        "as an ai",
+        "language model",
+        "system prompt",
+        "developer instructions",
+    ]
+    TC_BOOT_LIST_MARKERS: List[str] = [
+        r"^\s*[-*•]\s+",
+        r"^\s*\d+\.\s+",
+        r"^\s*\d+\)\s+",
+    ]
+    TC_BOOT_RETRY_ON_LINT_FAIL: int = 1
+    TC_BOOT_DIRECTIVES: Optional[str] = None
     
     # =========================================================================
     # Memory Configuration
