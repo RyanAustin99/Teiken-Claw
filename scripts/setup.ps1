@@ -177,6 +177,14 @@ $state = Get-TeikenInstallerContext `
     -NoStart:$NoStart `
     -NoUi:$NoUi
 
+# Request fullscreen/maximized terminal before installer output.
+if (-not $CI -and -not $NoUi) {
+    try {
+        [void](Request-TeikenFullscreen -NoAnsi:$NoAnsi)
+    } catch {
+    }
+}
+
 # Old cinematic installer menu is disabled; setup runs in stable plain mode.
 $state.Mode = if ($CI) { "CI" } else { "PLAIN" }
 

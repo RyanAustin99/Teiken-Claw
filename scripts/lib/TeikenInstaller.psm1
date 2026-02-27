@@ -287,6 +287,82 @@ function Initialize-TeikenConsole {
     [void](Enable-VirtualTerminal)
 }
 
+function Request-TeikenFullscreen {
+    [CmdletBinding()]
+    param(
+        [switch]$NoAnsi
+    )
+
+    if ($env:TEIKEN_NO_FULLSCREEN -eq '1') { return $false }
+
+    try {
+        if ([Console]::IsOutputRedirected -or [Console]::IsInputRedirected) { return $false }
+    } catch {
+    }
+
+    $changed = $false
+
+    # RawUI maximize for classic console hosts when supported.
+    try {
+        if ($Host -and $Host.UI -and $Host.UI.RawUI) {
+            $raw = $Host.UI.RawUI
+            $max = $raw.MaxPhysicalWindowSize
+            if ($max.Width -gt 0 -and $max.Height -gt 0) {
+                $newSize = New-Object System.Management.Automation.Host.Size($max.Width, $max.Height)
+                $newPos = New-Object System.Management.Automation.Host.Coordinates(0, 0)
+                try { $raw.WindowSize = $newSize } catch {}
+                try { $raw.WindowPosition = $newPos } catch {}
+                $changed = $true
+            }
+        }
+    } catch {
+    }
+
+    # Console host fallback.
+    try {
+        $w = [Console]::LargestWindowWidth
+        $h = [Console]::LargestWindowHeight
+        if ($w -gt 0 -and $h -gt 0) {
+            if ([Console]::WindowWidth -lt $w -or [Console]::WindowHeight -lt $h) {
+                [Console]::SetWindowSize($w, $h)
+                $changed = $true
+            }
+        }
+    } catch {
+    }
+
+    # Native maximize request.
+    try {
+        Add-Type -Namespace TeikenInstaller -Name WindowApi -MemberDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class WindowApi {
+  [DllImport("kernel32.dll")]
+  public static extern IntPtr GetConsoleWindow();
+  [DllImport("user32.dll")]
+  public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+}
+"@ -ErrorAction SilentlyContinue
+        $hwnd = [TeikenInstaller.WindowApi]::GetConsoleWindow()
+        if ($hwnd -ne [IntPtr]::Zero) {
+            [void][TeikenInstaller.WindowApi]::ShowWindow($hwnd, 3) # SW_MAXIMIZE
+            $changed = $true
+        }
+    } catch {
+    }
+
+    # Terminal control fallback (xterm family). Best effort only.
+    if (-not $NoAnsi) {
+        try {
+            [Console]::Write("${script:CSI}9;1t")
+            $changed = $true
+        } catch {
+        }
+    }
+
+    return $changed
+}
+
 function Get-TeikenAnsiSupport {
     param(
         [switch]$NoAnsi,
@@ -1774,6 +1850,7 @@ function Show-TeikenLaunchpad {
 
 Export-ModuleMember -Function @(
     'Get-TeikenInstallerContext',
+    'Request-TeikenFullscreen',
     'Start-TeikenUI',
     'Stop-TeikenUI',
     'Load-TeikenUnderlayLines',
