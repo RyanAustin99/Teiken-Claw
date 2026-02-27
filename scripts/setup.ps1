@@ -126,9 +126,6 @@ $state = Get-TeikenInstallerContext `
     -NoStart:$NoStart `
     -NoUi:$NoUi
 
-# Temporary stabilization: disable cinematic installer UI.
-$state.Mode = "PLAIN"
-
 if (-not $CI) {
     $noBrandColor = $NoAnsi -or $env:TEIKEN_NO_COLOR -eq "1"
     Show-SetupBranding -NoColor:$noBrandColor -ProjectRoot $projectRoot

@@ -7,6 +7,8 @@ $script:TeikenUiStarted = $false
 $script:TeikenCancelHandler = $null
 $script:TeikenPrevCtrlCAsInput = $false
 $script:TeikenCurrentState = $null
+$script:TeikenUnderlayLinesCache = $null
+$script:TeikenUnderlayHashExpected = 'ff4c82535ae8f9c3ba6c1e241983718073177312a744cae532e902606989041e'
 
 $brandingScript = Join-Path $PSScriptRoot '..\_branding.ps1'
 if (Test-Path $brandingScript) {
@@ -16,10 +18,220 @@ if (Test-Path $brandingScript) {
 function Strip-Ansi {
     param(
         [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
         [string]$Text
     )
 
     return [regex]::Replace($Text, "\x1b\[[0-9;?]*[ -/]*[@-~]", '')
+}
+
+function Load-TeikenUnderlayLines {
+    [CmdletBinding()]
+    param()
+
+    if ($script:TeikenUnderlayLinesCache) {
+        return $script:TeikenUnderlayLinesCache
+    }
+
+    $assetPath = Join-Path $PSScriptRoot '..\assets\underlay_teiken_matrix.txt'
+    if (-not (Test-Path $assetPath)) {
+        throw "Missing underlay asset: $assetPath"
+    }
+
+    $bytes = [System.IO.File]::ReadAllBytes($assetPath)
+    $hash = [System.Security.Cryptography.SHA256]::Create().ComputeHash($bytes)
+    $hashHex = -join ($hash | ForEach-Object { $_.ToString('x2') })
+    if ($hashHex -ne $script:TeikenUnderlayHashExpected) {
+        throw "Underlay asset hash mismatch. expected=$($script:TeikenUnderlayHashExpected) got=$hashHex"
+    }
+
+    $raw = [System.Text.Encoding]::UTF8.GetString($bytes)
+    $lines = @($raw -split '\r?\n')
+    if ($lines.Count -le 10) {
+        throw "Underlay asset invalid: expected > 10 lines, got $($lines.Count)"
+    }
+
+    # Width contract is validated on raw lines to preserve immutable asset bytes.
+    $maxRawWidth = ($lines | Measure-Object -Maximum Length).Maximum
+    if ($maxRawWidth -le 120) {
+        throw "Underlay asset invalid: expected max width > 120, got $maxRawWidth"
+    }
+
+    $clean = @()
+    foreach ($line in $lines) {
+        $clean += $line
+    }
+
+    $script:TeikenUnderlayLinesCache = $clean
+    return $script:TeikenUnderlayLinesCache
+}
+
+function Get-TeikenAnsiCells {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Line
+    )
+
+    $cells = New-Object System.Collections.Generic.List[object]
+    if ([string]::IsNullOrEmpty($Line)) {
+        return $cells
+    }
+
+    $esc = [char]27
+    $currentStyle = ''
+    $i = 0
+    while ($i -lt $Line.Length) {
+        $ch = $Line[$i]
+        if ($ch -eq $esc -and ($i + 1) -lt $Line.Length -and $Line[$i + 1] -eq '[') {
+            $j = $i + 2
+            while ($j -lt $Line.Length) {
+                $code = [int][char]$Line[$j]
+                if ($code -ge 64 -and $code -le 126) { break }
+                $j++
+            }
+            if ($j -lt $Line.Length) {
+                $seq = $Line.Substring($i, $j - $i + 1)
+                if ($Line[$j] -eq 'm') {
+                    $currentStyle = $seq
+                }
+                $i = $j + 1
+                continue
+            } else {
+                break
+            }
+        }
+
+        if ([int][char]$ch -ge 32) {
+            $cells.Add([pscustomobject]@{
+                Style = $currentStyle
+                Char = [string]$ch
+            })
+        }
+        $i++
+    }
+
+    return $cells
+}
+
+function Render-TeikenUnderlay {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [pscustomobject]$State,
+        [Parameter(Mandatory = $true)]
+        [int]$Tick,
+        [Parameter(Mandatory = $true)]
+        [int]$Width,
+        [Parameter(Mandatory = $true)]
+        [int]$Height,
+        [Parameter(Mandatory = $true)]
+        [int]$RegionTop,
+        [Parameter(Mandatory = $true)]
+        [int]$RegionHeight
+    )
+
+    $out = New-Object System.Collections.Generic.List[string]
+    if ($RegionHeight -le 0) { return $out }
+
+    $lines = @($State.Ui.UnderlayLines)
+    if (-not $lines -or $lines.Count -eq 0) {
+        try {
+            $lines = @(Load-TeikenUnderlayLines)
+            $State.Ui.UnderlayLines = $lines
+        } catch {
+            $fallback = "UNDERLAY LOAD ERROR: $($_.Exception.Message)"
+            $out.Add((Format-TeikenText -State $State -Text $fallback -Style 'Warn'))
+            return $out
+        }
+    }
+
+    $drawWidth = [Math]::Max(1, $Width - 2)
+    $cellsPerLine = New-Object System.Collections.Generic.List[object]
+    $maxVisibleLen = 0
+    foreach ($line in $lines) {
+        $cells = New-Object System.Collections.Generic.List[object]
+        $srcLine = if ($null -eq $line) { '' } else { [string]$line }
+        $esc = [char]27
+        $currentStyle = ''
+        $k = 0
+        while ($k -lt $srcLine.Length) {
+            $ch = $srcLine[$k]
+            if ($ch -eq $esc -and ($k + 1) -lt $srcLine.Length -and $srcLine[$k + 1] -eq '[') {
+                $j = $k + 2
+                while ($j -lt $srcLine.Length) {
+                    $code = [int][char]$srcLine[$j]
+                    if ($code -ge 64 -and $code -le 126) { break }
+                    $j++
+                }
+                if ($j -lt $srcLine.Length) {
+                    $seq = $srcLine.Substring($k, $j - $k + 1)
+                    if ($srcLine[$j] -eq 'm') {
+                        $currentStyle = $seq
+                    }
+                    $k = $j + 1
+                    continue
+                } else {
+                    break
+                }
+            }
+            if ([int][char]$ch -ge 32) {
+                $cells.Add([pscustomobject]@{
+                    Style = $currentStyle
+                    Char = [string]$ch
+                })
+            }
+            $k++
+        }
+        $cellsPerLine.Add($cells)
+        if ($cells.Count -gt $maxVisibleLen) {
+            $maxVisibleLen = $cells.Count
+        }
+    }
+    if ($maxVisibleLen -le 0) { $maxVisibleLen = 1 }
+
+    # Final-pass lock: render ANSI art as a stable picture (no drift/shimmer).
+    $xOffset = 0
+    $scanActive = $false
+    $scanRow = 0
+    $rowBoost = if ($State.TerminalCaps.Ansi) { "${script:CSI}1m" } else { '' }
+    $reset = if ($State.TerminalCaps.Ansi) { $State.Theme.Reset } else { '' }
+
+    for ($i = 0; $i -lt $RegionHeight; $i++) {
+        $cells = $cellsPerLine[$i % $cellsPerLine.Count]
+        if (-not $cells -or $cells.Count -eq 0) {
+            $out.Add((' ' * $drawWidth))
+            continue
+        }
+
+        $off = $xOffset % $cells.Count
+        $ordered = New-Object System.Collections.Generic.List[object]
+        if ($off -eq 0) {
+            foreach ($c in $cells) { $ordered.Add($c) }
+        } else {
+            for ($j = $off; $j -lt $cells.Count; $j++) { $ordered.Add($cells[$j]) }
+            for ($j = 0; $j -lt $off; $j++) { $ordered.Add($cells[$j]) }
+        }
+
+        $takeCount = [Math]::Min($drawWidth, $ordered.Count)
+        $sb = New-Object System.Text.StringBuilder
+        if ($scanActive -and $i -eq $scanRow) {
+            [void]$sb.Append($rowBoost)
+        }
+        for ($col = 0; $col -lt $takeCount; $col++) {
+            $cell = $ordered[$col]
+            if ($cell.Style) { [void]$sb.Append($cell.Style) }
+            [void]$sb.Append($cell.Char)
+        }
+        if ($takeCount -lt $drawWidth) {
+            [void]$sb.Append(' ' * ($drawWidth - $takeCount))
+        }
+        if ($State.TerminalCaps.Ansi) { [void]$sb.Append($reset) }
+        $out.Add($sb.ToString())
+    }
+
+    return $out
 }
 
 function Enable-VirtualTerminal {
@@ -446,10 +658,18 @@ function Get-TeikenInstallerContext {
             FailureTail = @()
             IntroPhase = 0
             ReadyPulse = 0
+            UnderlayLines = @()
+            UnderlayFullArt = $false
         }
     }
 
     $state.Theme = Get-TeikenTheme -State $state
+    try {
+        $state.Ui.UnderlayLines = @(Load-TeikenUnderlayLines)
+    } catch {
+        Write-TeikenMainLog -State $state -Message ("Underlay preload failed: {0}" -f $_.Exception.Message)
+        $state.Ui.UnderlayLines = @()
+    }
     Write-TeikenMainLog -State $state -Message "Context initialized mode=$mode project_root=$ProjectRoot"
 
     return $state
@@ -684,6 +904,9 @@ function Process-TeikenUiInput {
                 ([ConsoleKey]::V) {
                     $State.Ui.VerboseEnabled = -not $State.Ui.VerboseEnabled
                 }
+                ([ConsoleKey]::A) {
+                    $State.Ui.UnderlayFullArt = -not $State.Ui.UnderlayFullArt
+                }
                 ([ConsoleKey]::L) {
                     if (Test-Path $State.Paths.InstallLogDir) {
                         Start-Process explorer.exe $State.Paths.InstallLogDir | Out-Null
@@ -716,7 +939,7 @@ function Render-TeikenFrame {
 
     try {
         $now = [DateTime]::UtcNow
-        if (($now - $State.Ui.LastRender).TotalMilliseconds -lt 250) {
+        if (($now - $State.Ui.LastRender).TotalMilliseconds -lt 100) {
             return
         }
 
@@ -730,7 +953,7 @@ function Render-TeikenFrame {
         } catch {
         }
 
-        $width = [Math]::Max(70, $State.TerminalCaps.Width)
+        $width = [Math]::Max(20, $State.TerminalCaps.Width)
 
         $frameLines = New-Object System.Collections.Generic.List[string]
         $failure = [bool]($State.ExitCode -ne 0)
@@ -747,14 +970,13 @@ function Render-TeikenFrame {
     $metaGit = if ($State.Runtime.GitSha) { $State.Runtime.GitSha } else { '--------' }
 
     $innerWidth = [Math]::Max(4, $width - 4)
-    $tree = '/\\'
     $logoLines = @(
-        (Format-TeikenText -State $State -Text ("{0}   ████████╗███████╗██╗██╗  ██╗███████╗███╗   ██╗   {0}" -f $tree) -Style 'Teal'),
-        (Format-TeikenText -State $State -Text ("{0}   ╚══██╔══╝██╔════╝██║██║ ██╔╝██╔════╝████╗  ██║   {0}" -f $tree) -Style 'Teal'),
-        (Format-TeikenText -State $State -Text ("{0}      ██║   █████╗  ██║█████╔╝ █████╗  ██╔██╗ ██║   {0}" -f $tree) -Style 'Teal'),
-        (Format-TeikenText -State $State -Text ("{0}      ██║   ██╔══╝  ██║██╔═██╗ ██╔══╝  ██║╚██╗██║   {0}" -f $tree) -Style 'Teal'),
-        (Format-TeikenText -State $State -Text ("{0}      ██║   ███████╗██║██║  ██╗███████╗██║ ╚████║   {0}" -f $tree) -Style 'Teal'),
-        (Format-TeikenText -State $State -Text ("{0}      ╚═╝   ╚══════╝╚═╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═══╝   {0}" -f $tree) -Style 'Teal')
+        (Format-TeikenText -State $State -Text '   ████████╗███████╗██╗██╗  ██╗███████╗███╗   ██╗' -Style 'Teal'),
+        (Format-TeikenText -State $State -Text '   ╚══██╔══╝██╔════╝██║██║ ██╔╝██╔════╝████╗  ██║' -Style 'Teal'),
+        (Format-TeikenText -State $State -Text '      ██║   █████╗  ██║█████╔╝ █████╗  ██╔██╗ ██║' -Style 'Teal'),
+        (Format-TeikenText -State $State -Text '      ██║   ██╔══╝  ██║██╔═██╗ ██╔══╝  ██║╚██╗██║' -Style 'Teal'),
+        (Format-TeikenText -State $State -Text '      ██║   ███████╗██║██║  ██╗███████╗██║ ╚████║' -Style 'Teal'),
+        (Format-TeikenText -State $State -Text '      ╚═╝   ╚══════╝╚═╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═══╝' -Style 'Teal')
     )
 
     foreach ($logoLine in $logoLines) {
@@ -779,8 +1001,34 @@ function Render-TeikenFrame {
     $frameLines.Add("┗" + ('━' * [Math]::Max(2, $width - 2)) + "┛")
 
     $ticker = Get-TeikenStatusTicker -State $State
-    $statusLine = "{0} Mode: {1}   ANSI: {2}   Shell: {3}   Logs: {4}" -f $ticker, $modeLabel, $ansiLabel, $State.TerminalCaps.Shell, (Get-TeikenMiddleEllipsis -Text $State.Artifacts.MainLogPath -MaxLength ([Math]::Max(20, $width - 62)))
+    $statusLine = "{0} Mode: {1}   ANSI: {2}   Shell: {3}   Logs: {4}" -f $ticker, $modeLabel, $ansiLabel, $State.TerminalCaps.Shell, (Get-TeikenMiddleEllipsis -Text $State.Artifacts.MainLogPath -MaxLength ([Math]::Max(12, $width - 62)))
+    if ((Get-TeikenVisibleLength -Text $statusLine) -gt $width) {
+        $statusLine = Get-TeikenMiddleEllipsis -Text (Strip-Ansi -Text $statusLine) -MaxLength $width
+        if ($State.TerminalCaps.Ansi) {
+            $statusLine = Format-TeikenText -State $State -Text $statusLine -Style 'Muted'
+        }
+    }
     $frameLines.Add($statusLine)
+    $frameLines.Add('')
+
+    $underlayHeight = if ($State.Ui.UnderlayFullArt) {
+        [Math]::Min([Math]::Max(18, [Math]::Floor($State.TerminalCaps.Height * 0.5)), [Math]::Max(6, $State.TerminalCaps.Height - 12))
+    } else {
+        if ($State.TerminalCaps.Height -ge 40) { 10 } elseif ($State.TerminalCaps.Height -ge 30) { 8 } else { 6 }
+    }
+    if ($State.Ui.UnderlayFullArt) {
+        $underlayHeader = 'UNDERLAY: TEIKEN MATRIX (Press A to return)'
+        if ((Get-TeikenVisibleLength -Text $underlayHeader) -gt $width) {
+            $underlayHeader = Get-TeikenMiddleEllipsis -Text $underlayHeader -MaxLength $width
+        }
+        $frameLines.Add((Format-TeikenText -State $State -Text $underlayHeader -Style 'Muted'))
+    }
+
+    $underlayLines = Render-TeikenUnderlay -State $State -Tick $State.Ui.Frame -Width $width -Height $State.TerminalCaps.Height -RegionTop $frameLines.Count -RegionHeight $underlayHeight
+    foreach ($uLine in $underlayLines) {
+        $frameLines.Add($uLine)
+    }
+    $frameLines.Add('')
 
     $progressWidth = if ($width -ge 120) { 32 } else { 24 }
     $progressBar = Get-TeikenProgressBar -State $State -Width $progressWidth
@@ -876,6 +1124,7 @@ function Render-TeikenFrame {
         $frameLines += $pathPanel
     }
 
+    $verboseOverlay = @()
     if ($State.Ui.VerboseEnabled) {
         $tail = @($State.Ui.VerboseTail)
         $tailLines = if ($tail.Count -gt 20) {
@@ -886,13 +1135,12 @@ function Render-TeikenFrame {
         if (-not $tailLines -or $tailLines.Count -eq 0) {
             $tailLines = @('No output yet...')
         }
-        $outputPanel = New-TeikenPanel -State $State -Title 'Output (tail)' -Lines $tailLines -Width $width
-        $frameLines.Add('')
-        $frameLines += $outputPanel
+        $verboseOverlay = @(New-TeikenPanel -State $State -Title 'Output (tail)' -Lines $tailLines -Width $width)
     }
 
     if ($State.Ui.ShowHelp) {
         $helpLines = @(
+            'A: Toggle full underlay view',
             'V: Toggle verbose tail panel',
             'L: Open install logs folder',
             'Q: Cancel installer (exit 130)',
@@ -904,24 +1152,40 @@ function Render-TeikenFrame {
     }
 
     $frameLines.Add('')
-    $frameLines.Add((Format-TeikenText -State $State -Text 'Press V for verbose output • Press L to open logs • Press Q to cancel • Press ? for help' -Style 'Muted'))
-    $frameLines.Add((Format-TeikenText -State $State -Text ('Main log: ' + $State.Artifacts.MainLogPath) -Style 'Dim'))
-
-    $lastFrameLineCount = 0
-    if ($State.Ui.PSObject.Properties.Name -contains 'LastFrameLineCount') {
-        $lastFrameLineCount = [int]$State.Ui.LastFrameLineCount
+    $footerLine = 'Press A for full art • Press V for verbose output • Press L to open logs • Press Q to cancel • Press ? for help'
+    if ($footerLine.Length -gt $width) {
+        $footerLine = Get-TeikenMiddleEllipsis -Text $footerLine -MaxLength $width
     }
-    if ($lastFrameLineCount -gt $frameLines.Count) {
-        $fill = ' ' * [Math]::Max(1, $width)
-        for ($i = 0; $i -lt ($lastFrameLineCount - $frameLines.Count); $i++) {
-            $frameLines.Add($fill)
+    $mainLogLine = 'Main log: ' + $State.Artifacts.MainLogPath
+    if ($mainLogLine.Length -gt $width) {
+        $mainLogLine = Get-TeikenMiddleEllipsis -Text $mainLogLine -MaxLength $width
+    }
+    $frameLines.Add((Format-TeikenText -State $State -Text $footerLine -Style 'Muted'))
+    $frameLines.Add((Format-TeikenText -State $State -Text $mainLogLine -Style 'Dim'))
+
+    $targetHeight = [Math]::Max(12, $State.TerminalCaps.Height)
+    $viewport = New-Object System.Collections.Generic.List[string]
+    for ($row = 0; $row -lt $targetHeight; $row++) {
+        if ($row -lt $frameLines.Count) {
+            $viewport.Add($frameLines[$row])
+        } else {
+            $viewport.Add(' ' * [Math]::Max(1, $width))
         }
     }
-    $State.Ui | Add-Member -NotePropertyName LastFrameLineCount -NotePropertyValue $frameLines.Count -Force
+
+    if ($verboseOverlay.Count -gt 0) {
+        $overlayHeight = [Math]::Min($verboseOverlay.Count, $targetHeight)
+        $start = [Math]::Max(0, $targetHeight - $overlayHeight)
+        for ($i = 0; $i -lt $overlayHeight; $i++) {
+            $viewport[$start + $i] = $verboseOverlay[$i]
+        }
+    }
+
+    $State.Ui | Add-Member -NotePropertyName LastFrameLineCount -NotePropertyValue $viewport.Count -Force
 
     $buffer = New-Object System.Text.StringBuilder
     [void]$buffer.Append("${script:CSI}H")
-    foreach ($line in $frameLines) {
+    foreach ($line in $viewport) {
         [void]$buffer.Append($line)
         [void]$buffer.Append("`n")
     }
@@ -1512,6 +1776,8 @@ Export-ModuleMember -Function @(
     'Get-TeikenInstallerContext',
     'Start-TeikenUI',
     'Stop-TeikenUI',
+    'Load-TeikenUnderlayLines',
+    'Render-TeikenUnderlay',
     'Invoke-TeikenStep',
     'Invoke-TeikenProcessQuiet',
     'Render-TeikenFrame',
