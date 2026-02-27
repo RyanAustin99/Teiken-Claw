@@ -137,6 +137,15 @@ $script:setupUnhandled = $null
 try {
     Start-TeikenUI -State $state
 
+    if ($state.Mode -eq "CINEMATIC") {
+        $holdUntil = (Get-Date).AddSeconds(5)
+        while ((Get-Date) -lt $holdUntil) {
+            if ($state.Cancelled) { break }
+            Render-TeikenFrame -State $state
+            Start-Sleep -Milliseconds 100
+        }
+    }
+
     $null = Invoke-TeikenStep -State $state -StepId "resolve_context" -Action {
         param($state, $step)
 
