@@ -52,3 +52,20 @@ def test_delete_running_agent_cleans_runtime_without_crash(tmp_path):
     assert context.agent_service.get_agent("to-delete") is None
     snapshot = context.runtime_supervisor.snapshot()
     assert len(snapshot.runtimes) == 0
+
+
+def test_delete_agent_survives_session_cleanup_failure(tmp_path):
+    context = build_context(cli_data_dir=str(tmp_path / "cp_data"))
+    router = TuiCommandRouter(context)
+
+    hatch = _run(router.execute("hatch --name delete-resilient"))
+    assert "Started runtime and opened chat session" in hatch.output
+
+    def _raise_cleanup(_agent_id: str) -> int:
+        raise RuntimeError("db locked")
+
+    context.session_service.delete_sessions_for_agent = _raise_cleanup
+
+    deleted = _run(router.execute("agents delete delete-resilient --yes"))
+    assert "Deleted: delete-resilient" in deleted.output
+    assert context.agent_service.get_agent("delete-resilient") is None

@@ -120,17 +120,42 @@ class RuntimeSupervisor:
 
     async def delete_agent(self, agent_id: str) -> bool:
         """Stop runtime state and delete agent/session persistence safely."""
+        agent = self.agent_service.get_agent(agent_id)
+        resolved_agent_id = agent.id if agent else agent_id
+        cleanup_errors: list[str] = []
         try:
-            await self.stop_agent(agent_id)
-        except Exception:
+            await self.stop_agent(resolved_agent_id)
+        except Exception as exc:
             # Continue with deletion cleanup even if stop path fails.
-            self._runners.pop(agent_id, None)
-        self._runners.pop(agent_id, None)
-        self._last_errors.pop(agent_id, None)
-        self.session_service.delete_sessions_for_agent(agent_id)
-        deleted = self.agent_service.delete_agent(agent_id)
+            cleanup_errors.append(f"stop_failed:{exc}")
+            self._runners.pop(resolved_agent_id, None)
+        self._runners.pop(resolved_agent_id, None)
+
+        try:
+            self.session_service.delete_sessions_for_agent(resolved_agent_id)
+        except Exception as exc:
+            cleanup_errors.append(f"session_cleanup_failed:{exc}")
+
+        deleted = False
+        try:
+            deleted = self.agent_service.delete_agent(resolved_agent_id)
+        except Exception as exc:
+            cleanup_errors.append(f"agent_delete_failed:{exc}")
+
+        if cleanup_errors:
+            self._last_errors[resolved_agent_id] = " | ".join(cleanup_errors)
+            if self.audit_service:
+                self.audit_service.log(
+                    "agent.delete.error",
+                    target=resolved_agent_id,
+                    details={"errors": cleanup_errors, "deleted": deleted},
+                    actor="supervisor",
+                )
+        else:
+            self._last_errors.pop(resolved_agent_id, None)
+
         if deleted and self.audit_service:
-            self.audit_service.log("agent.delete", target=agent_id, details={}, actor="supervisor")
+            self.audit_service.log("agent.delete", target=resolved_agent_id, details={}, actor="supervisor")
         return deleted
 
     async def restart_all(self) -> SupervisorSnapshot:

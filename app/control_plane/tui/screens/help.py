@@ -24,7 +24,7 @@ class HelpScreen(BaseControlScreen):
                     "Ctrl+K Command palette",
                     "Ctrl+R Refresh",
                     "Ctrl+L Logs",
-                    "Ctrl+C Quit",
+                    "Ctrl+Q Quit",
                     "",
                     "Chat Commands",
                     "/help /exit /new /status /model /tools /clear",

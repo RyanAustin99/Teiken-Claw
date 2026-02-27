@@ -83,6 +83,20 @@ Screen {
     height: 1fr;
 }
 
+#chat-transcript > .text-area--selection {
+    background: #ff7a18;
+    color: #18120a;
+}
+
+#chat-transcript .text-area--selection {
+    background: #ff7a18;
+    color: #18120a;
+}
+
+#chat-transcript > .text-area--cursor {
+    color: #ff9a4a;
+}
+
 #models-table,
 #agents-table,
 #doctor-table {

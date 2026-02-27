@@ -49,7 +49,7 @@ class BaseControlScreen(Screen):
         yield Static("Not implemented")
 
     def key_hint_text(self) -> str:
-        return "F1 Help  Esc Back  Ctrl+K Palette  Ctrl+R Refresh  Ctrl+L Logs  Ctrl+C Quit"
+        return "F1 Help  Esc Back  Ctrl+K Palette  Ctrl+R Refresh  Ctrl+L Logs  Ctrl+Q Quit"
 
     async def refresh_data(self) -> None:
         """Screen-specific refresh hook."""

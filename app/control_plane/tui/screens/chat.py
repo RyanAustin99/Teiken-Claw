@@ -7,7 +7,7 @@ import time
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal
-from textual.widgets import Button, Input, RichLog, Static
+from textual.widgets import Button, Input, Static, TextArea
 
 from app.control_plane.domain.errors import ValidationError
 from app.control_plane.tui.navigation import Route
@@ -31,7 +31,13 @@ class ChatScreen(BaseControlScreen):
         super().__init__(context)
         self.initial_agent_id = initial_agent_id
         self.agent_input = Input(placeholder="Agent id or name", id="chat-agent")
-        self.transcript = RichLog(id="chat-transcript", highlight=False, markup=False, wrap=True, auto_scroll=True)
+        self.transcript = TextArea(
+            "",
+            id="chat-transcript",
+            read_only=True,
+            show_line_numbers=False,
+            soft_wrap=True,
+        )
         self.message_input = Input(placeholder="Type message or /help command", id="chat-input")
         self.state_line = Static("No active session", classes="cp-muted")
         self.active_agent_id: str | None = None
@@ -52,9 +58,7 @@ class ChatScreen(BaseControlScreen):
         if self.initial_agent_id:
             self.agent_input.value = self.initial_agent_id
         self.message_input.focus()
-        self.transcript.write(
-            sanitize_terminal_text("Chat commands: /help /exit /new /status /model /tools /receipts /verbose /clear")
-        )
+        self._append_transcript("Chat commands: /help /exit /new /status /model /tools /receipts /verbose /clear")
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id != "chat-input":
@@ -100,7 +104,7 @@ class ChatScreen(BaseControlScreen):
 
     async def _handle_input(self, text: str) -> None:
         if self._pending_task and not self._pending_task.done():
-            self.transcript.write("assistant> Still working on the previous message. Please wait.")
+            self._append_transcript("assistant> Still working on the previous message. Please wait.")
             return
         if text.startswith("/"):
             await self._handle_command(text.lower())
@@ -109,7 +113,7 @@ class ChatScreen(BaseControlScreen):
             await self._start_chat_session(new=False)
         if not self.active_agent_id or not self.active_session_id:
             raise ValidationError("No active chat session.")
-        self.transcript.write(sanitize_terminal_text(f"you> {text}"))
+        self._append_transcript(f"you> {text}")
         start = time.perf_counter()
         self.state_line.update("[WAIT] Agent is thinking...")
 
@@ -134,37 +138,31 @@ class ChatScreen(BaseControlScreen):
             self.jump(Route.DASHBOARD)
             return
         if command == "/help":
-            self.transcript.write(
-                sanitize_terminal_text("/help /exit /new /status /model /tools /receipts /verbose /clear")
-            )
+            self._append_transcript("/help /exit /new /status /model /tools /receipts /verbose /clear")
             return
         if command == "/new":
             await self._start_chat_session(new=True)
             return
         if command == "/status":
             snapshot = await self.context.runtime_supervisor.snapshot_async()
-            self.transcript.write(
-                sanitize_terminal_text(
-                    f"status> runtimes={len(snapshot.runtimes)} inflight={snapshot.global_inflight_ollama}/{snapshot.max_inflight_ollama}"
-                )
+            self._append_transcript(
+                f"status> runtimes={len(snapshot.runtimes)} inflight={snapshot.global_inflight_ollama}/{snapshot.max_inflight_ollama}"
             )
             return
         if command == "/model":
             if not self.active_agent_id:
-                self.transcript.write("model> no active agent")
+                self._append_transcript("model> no active agent")
             else:
                 agent = self.context.agent_service.get_agent(self.active_agent_id)
                 cfg = self.context.config_service.load().values
-                self.transcript.write(
-                    sanitize_terminal_text(f"model> {agent.model if agent and agent.model else cfg.default_model}")
-                )
+                self._append_transcript(f"model> {agent.model if agent and agent.model else cfg.default_model}")
             return
         if command == "/tools":
             if not self.active_agent_id:
-                self.transcript.write("tools> no active agent")
+                self._append_transcript("tools> no active agent")
             else:
                 agent = self.context.agent_service.get_agent(self.active_agent_id)
-                self.transcript.write(sanitize_terminal_text(f"tools> {agent.tool_profile if agent else 'safe'}"))
+                self._append_transcript(f"tools> {agent.tool_profile if agent else 'safe'}")
             return
         if command.startswith("/receipts"):
             limit = 10
@@ -176,12 +174,12 @@ class ChatScreen(BaseControlScreen):
         if command == "/verbose":
             self._verbose_receipts = not self._verbose_receipts
             mode = "on" if self._verbose_receipts else "off"
-            self.transcript.write(sanitize_terminal_text(f"receipts verbose {mode}"))
+            self._append_transcript(f"receipts verbose {mode}")
             return
         if command == "/clear":
             self.transcript.clear()
             return
-        self.transcript.write(sanitize_terminal_text(f"Unknown command: {command}"))
+        self._append_transcript(f"Unknown command: {command}")
 
     async def _start_chat_session(self, new: bool) -> None:
         agent = self._resolve_agent()
@@ -206,33 +204,33 @@ class ChatScreen(BaseControlScreen):
         if not self.active_agent_id:
             agent = self._resolve_agent(optional=True)
             if not agent:
-                self.transcript.write("sessions> select an agent first")
+                self._append_transcript("sessions> select an agent first")
                 return
             agent_id = agent.id
         else:
             agent_id = self.active_agent_id
         sessions = self.context.session_service.list_sessions(agent_id, limit=10)
         if not sessions:
-            self.transcript.write("sessions> no sessions")
+            self._append_transcript("sessions> no sessions")
             return
-        self.transcript.write("sessions>")
+        self._append_transcript("sessions>")
         for session in sessions:
-            self.transcript.write(sanitize_terminal_text(f"- {session.id} ({session.updated_at.isoformat()})"))
+            self._append_transcript(f"- {session.id} ({session.updated_at.isoformat()})")
 
     async def _rename_session(self) -> None:
         if not self.active_session_id:
-            self.transcript.write("rename> no active session")
+            self._append_transcript("rename> no active session")
             return
         new_title = f"session-{self.active_session_id[:8]}"
         self.context.session_service.rename_session(self.active_session_id, new_title)
-        self.transcript.write(sanitize_terminal_text(f"rename> updated title to {new_title}"))
+        self._append_transcript(f"rename> updated title to {new_title}")
 
     async def _delete_session(self) -> None:
         if not self.active_session_id:
-            self.transcript.write("delete> no active session")
+            self._append_transcript("delete> no active session")
             return
         deleted = self.context.session_service.delete_session(self.active_session_id)
-        self.transcript.write("delete> session removed" if deleted else "delete> session not found")
+        self._append_transcript("delete> session removed" if deleted else "delete> session not found")
         self.active_session_id = None
 
     def _load_transcript(self) -> None:
@@ -244,31 +242,40 @@ class ChatScreen(BaseControlScreen):
                 envelopes = extract_tool_results(item.content)
                 if envelopes:
                     for envelope in envelopes:
-                        self.transcript.write(sanitize_terminal_text(self._render_tool_line(envelope)))
+                        self._append_transcript(self._render_tool_line(envelope))
                         if self._verbose_receipts:
-                            self.transcript.write(sanitize_terminal_text(f"  receipt> {envelope.model_dump_json()}"))
+                            self._append_transcript(f"  receipt> {envelope.model_dump_json()}")
                 else:
                     outcome = "OK" if item.tool_ok else "DENIED"
                     elapsed = f" {item.tool_elapsed_ms}ms" if item.tool_elapsed_ms is not None else ""
-                    self.transcript.write(sanitize_terminal_text(f"[TOOL] {item.tool_name} {outcome}{elapsed}"))
+                    self._append_transcript(f"[TOOL] {item.tool_name} {outcome}{elapsed}")
                     if self._verbose_receipts:
-                        self.transcript.write(sanitize_terminal_text(f"{item.role}> {item.content}"))
+                        self._append_transcript(f"{item.role}> {item.content}")
                 continue
-            self.transcript.write(sanitize_terminal_text(f"{item.role}> {item.content}"))
+            self._append_transcript(f"{item.role}> {item.content}")
 
     async def _show_receipts(self, limit: int) -> None:
         if not self.active_session_id:
-            self.transcript.write("receipts> no active session")
+            self._append_transcript("receipts> no active session")
             return
         receipts = self.context.session_service.get_tool_receipts(self.active_session_id, limit=limit)
         if not receipts:
-            self.transcript.write("receipts> none")
+            self._append_transcript("receipts> none")
             return
-        self.transcript.write(f"receipts> showing {len(receipts)}")
+        self._append_transcript(f"receipts> showing {len(receipts)}")
         for receipt in receipts:
-            self.transcript.write(sanitize_terminal_text(self._render_tool_line(receipt)))
+            self._append_transcript(self._render_tool_line(receipt))
             if self._verbose_receipts:
-                self.transcript.write(sanitize_terminal_text(f"  receipt> {receipt.model_dump_json()}"))
+                self._append_transcript(f"  receipt> {receipt.model_dump_json()}")
+
+    def _append_transcript(self, line: str) -> None:
+        safe_line = sanitize_terminal_text(line)
+        current = self.transcript.text
+        self.transcript.load_text(f"{current}\n{safe_line}" if current else safe_line)
+        last_line_index = max(0, self.transcript.document.line_count - 1)
+        last_col = len(self.transcript.document.get_line(last_line_index))
+        self.transcript.move_cursor((last_line_index, last_col))
+        self.transcript.scroll_end(animate=False, immediate=True)
 
     @staticmethod
     def _render_tool_line(envelope) -> str:

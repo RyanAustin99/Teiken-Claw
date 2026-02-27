@@ -32,6 +32,7 @@ class AgentsScreen(BaseControlScreen):
         self.model_input = Input(placeholder="Edit model", id="agent-edit-model")
         self.tool_input = Input(placeholder="Tool profile (safe|balanced|dangerous)", id="agent-edit-tool")
         self.save_button = Button("Save Edit", id="agents-save-edit")
+        self._row_agent_ids: list[str] = []
 
     def compose_body(self) -> ComposeResult:
         yield self.hint
@@ -49,6 +50,7 @@ class AgentsScreen(BaseControlScreen):
     async def refresh_data(self) -> None:
         self.clear_error()
         self.table.clear()
+        self._row_agent_ids = []
         agents = self.context.agent_service.list_agents()
         status_icon = {
             "running": "[OK]",
@@ -68,6 +70,7 @@ class AgentsScreen(BaseControlScreen):
                 sanitize_terminal_text(agent.last_seen_at.isoformat() if agent.last_seen_at else "-"),
                 sanitize_terminal_text(last_error),
             )
+            self._row_agent_ids.append(agent.id)
         self.hint.update(self._remediation_hint())
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -129,11 +132,10 @@ class AgentsScreen(BaseControlScreen):
         row = self.table.cursor_row
         if row is None:
             return None
-        row_data = self.table.get_row_at(row)
-        if not row_data:
+        if row < 0 or row >= len(self._row_agent_ids):
             return None
-        name = str(row_data[0])
-        return self.context.agent_service.get_agent(name)
+        agent_id = self._row_agent_ids[row]
+        return self.context.agent_service.get_agent(agent_id)
 
     def _remediation_hint(self) -> str:
         agents = self.context.agent_service.list_agents()

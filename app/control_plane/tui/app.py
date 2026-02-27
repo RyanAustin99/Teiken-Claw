@@ -62,7 +62,7 @@ class TeikenControlPlaneApp(App):
         Binding("ctrl+s", "save_context", "Save"),
         Binding("ctrl+r", "refresh_screen", "Refresh"),
         Binding("ctrl+l", "focus_logs", "Logs"),
-        Binding("ctrl+c", "request_quit", "Quit"),
+        Binding("ctrl+q", "request_quit", "Quit"),
         # Compatibility alias.
         Binding("ctrl+p", "command_palette", show=False),
     ]
@@ -200,7 +200,7 @@ class TeikenControlPlaneApp(App):
             PaletteCommand("Restart Dev Server", "Runtime", self._restart_server, "Restart server process"),
             PaletteCommand("Help", "Navigation", self.action_open_help, "Show keybindings", key_hint="F1"),
             PaletteCommand("Back", "Navigation", self.action_back, "Go back one screen", key_hint="Esc"),
-            PaletteCommand("Quit", "Runtime", self.action_request_quit, "Exit safely", key_hint="Ctrl+C"),
+            PaletteCommand("Quit", "Runtime", self.action_request_quit, "Exit safely", key_hint="Ctrl+Q"),
         ]
 
         try:
