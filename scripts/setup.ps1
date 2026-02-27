@@ -534,9 +534,11 @@ if (-not $NoStart) {
         "run_control_plane" {
             $pythonExe = Join-Path $projectRoot "venv\Scripts\python.exe"
             if (Test-Path $pythonExe) {
-                $args = @("-m", "app.control_plane.entrypoint", "run")
+                # Installer flow bypasses the run boot menu and goes straight to LUI.
+                # Use explicit no-ui only when requested.
+                $args = @("-m", "app.control_plane.entrypoint")
                 if ($NoUi) {
-                    $args += "--no-ui"
+                    $args = @("-m", "app.control_plane.entrypoint", "run", "--no-ui")
                 }
                 & $pythonExe @args
                 exit $LASTEXITCODE
