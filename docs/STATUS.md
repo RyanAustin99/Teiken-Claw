@@ -1,7 +1,7 @@
 # Project Status
 
-## Current Version: 1.20.3
-## Last Updated: 2026-02-26
+## Current Version: 1.20.5
+## Last Updated: 2026-02-27
 ## Current Track: Terminal-First Control Plane
 
 ---
@@ -105,6 +105,7 @@ Program outcome on 2026-02-25:
 - [x] Phase 16: 1.20.3 install-time dynamic boot UI + `teiken-claw run` flow
 - [x] Phase 17: Trust layer + autonomy parity (canonical tool envelopes, shared executor, chat/scheduler parity, receipt/audit visibility)
 - [x] Phase 18: Cinematic installer terminal v2 for `scripts/setup.ps1`
+- [x] Phase 19: Natural hatch boot (LLM-generated first message, hidden identity profile, onboarding preference capture)
 
 ### Validation Ledger (1.20 workstream)
 
@@ -144,6 +145,7 @@ Program outcome on 2026-02-25:
 | 2026-02-26 | `powershell -NoProfile -Command "[System.Management.Automation.Language.Parser]::ParseFile(...TeikenInstaller.psm1...)"` | PASS | Phase 18 installer module syntax check |
 | 2026-02-26 | `powershell -NoProfile -Command "Import-Module .\\scripts\\lib\\TeikenInstaller.psm1 -Force"` | PASS | Phase 18 exported installer commands importable |
 | 2026-02-26 | `powershell -ExecutionPolicy Bypass -File scripts\\setup.ps1 -CI -SkipSmokeTests -NoStart -NoUi` | PASS | Full Phase 18 setup pipeline executed in CI/plain mode with logs + summary artifacts |
+| 2026-02-27 | `$env:DEBUG='false'; python -m pytest -q tests/test_tc_profile_strip.py tests/test_boot_linter.py tests/control_plane/test_hatch_boot_integration.py` | PASS | Phase 19 gate (`8 passed`) for profile strip, boot linter, and hatch onboarding integration |
 
 ### Phase 12/13 Closure Notes
 
@@ -256,3 +258,29 @@ Program outcome on 2026-02-25:
 3. Added branded helper script `scripts/_branding.ps1` for reusable terminal logo assets.
 4. Added installer docs at `docs/INSTALLER.md`.
 5. Added explicit ignore patterns for installer/boot logs in `.gitignore`.
+
+### 1.20.5 Phase 19 Natural Hatch Boot Notes
+
+1. Added natural fresh-boot orchestration with `HatchBootService` + `RuntimeSupervisor.trigger_hatch_boot(...)`.
+2. Added strict hidden identity block handling (`<tc_profile>...</tc_profile>`) with safe strip before user-visible sending.
+3. Added first-message linter and rewrite guardrails (`boot_linter`) for:
+   - forbidden meta phrases
+   - no checklist/list formatting
+   - max words
+   - max questions.
+4. Added onboarding identity state and profile fields on control-plane agents:
+   - `is_fresh`
+   - `onboarding_state`
+   - `profile_json`
+   - `boot_directives`
+   - `degraded_reason`.
+5. Added onboarding preference extraction flow and persistence into memory scopes (`AGENT_SELF`, `USER_PREFS`) with compatibility-safe storage updates.
+6. Added Telegram identity lifecycle commands and routing:
+   - `/hatch`
+   - `/identity`
+   - `/rename <name>`
+   - `/onboard`.
+7. Added regression coverage for the Phase 19 contract:
+   - `tests/test_tc_profile_strip.py`
+   - `tests/test_boot_linter.py`
+   - `tests/control_plane/test_hatch_boot_integration.py`.
