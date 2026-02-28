@@ -100,15 +100,15 @@ class ErrorBanner(Static):
         self._payload = payload
         self._show_details = False
         self.remove_class("hidden")
-        self._render()
+        self._render_banner()
 
     def toggle_details(self) -> None:
         if not self._payload:
             return
         self._show_details = not self._show_details
-        self._render()
+        self._render_banner()
 
-    def _render(self) -> None:
+    def _render_banner(self) -> None:
         if not self._payload:
             self.update("")
             return
