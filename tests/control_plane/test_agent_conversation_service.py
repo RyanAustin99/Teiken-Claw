@@ -263,3 +263,25 @@ def test_conversation_rewrites_meta_identity_language(tmp_path):
     lowered = result.lower()
     assert "operational identity" not in lowered
     assert "keep it respectful" not in lowered
+
+
+def test_onboarding_waiting_injects_onboarding_system_block(tmp_path):
+    context = build_context(cli_data_dir=str(tmp_path / "cp_data"))
+    agent = context.agent_service.create_agent(name="onboarding-block-agent")
+    session = context.session_service.new_session(agent.id, title="chat")
+    context.agent_service.update_agent(
+        agent.id,
+        {"is_fresh": True, "onboarding_state": AgentOnboardingState.WAITING_USER_PREFS},
+    )
+
+    captured = {}
+
+    async def _fake_chat_messages(messages, model=None, tools=None, options=None):
+        captured["messages"] = messages
+        return "What should I call you, and what do you want to call me?"
+
+    context.model_service.chat_messages = _fake_chat_messages
+    _run(context.conversation_service.generate_response(agent.id, session.id, "whaddup my guy"))
+
+    system_messages = [m["content"] for m in captured["messages"] if m["role"] == "system"]
+    assert any("Onboarding is still in progress" in msg for msg in system_messages)

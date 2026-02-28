@@ -38,7 +38,7 @@ def test_hatch_boot_persists_identity_and_transitions_after_reply(tmp_path):
     agent = context.agent_service.get_agent("phase19-agent")
     assert agent is not None
     assert agent.profile_json is not None
-    assert agent.profile_json.get("agent_display_name") == "Forge"
+    assert agent.profile_json.get("agent_display_name") == "Assistant"
     assert agent.onboarding_state == AgentOnboardingState.WAITING_USER_PREFS
 
     memories = get_memory_store().list_memories(scope=f"agent:{agent.id}", limit=100)
@@ -96,7 +96,7 @@ def test_hatch_boot_synthesizes_profile_when_tc_profile_missing(tmp_path):
     assert agent.degraded_reason is None
     assert agent.onboarding_state == AgentOnboardingState.WAITING_USER_PREFS
     assert agent.profile_json is not None
-    assert agent.profile_json.get("agent_display_name") == "fallback-agent"
+    assert agent.profile_json.get("agent_display_name") == "Assistant"
     assert agent.profile_json.get("agent_voice")
     assert agent.profile_json.get("agent_principles")
     assert isinstance(agent.profile_json.get("onboarding_intent"), dict)
@@ -107,3 +107,30 @@ def test_hatch_boot_synthesizes_profile_when_tc_profile_missing(tmp_path):
     assert assistant_messages
     assert all("<tc_profile>" not in item.lower() for item in assistant_messages)
     assert any(item.strip() for item in assistant_messages)
+
+
+def test_hatch_boot_strips_self_assigned_name_from_visible_message(tmp_path):
+    context = build_context(cli_data_dir=str(tmp_path / "cp_data"))
+    router = TuiCommandRouter(context)
+
+    responses = iter(
+        [
+            (
+                '<tc_profile>{"agent_display_name":"Alex","agent_voice":["calm","direct"],'
+                '"agent_principles":["Be useful","Be concise","Be honest"],'
+                '"onboarding_intent":{"ask_user_name":true,"ask_agent_name":true,"ask_purpose":true,"ask_tone":false}}'
+                "</tc_profile>\n\n"
+                "I don't have a real name, but you can call me Alex. What should I call you?"
+            ),
+            "Ready.",
+        ]
+    )
+
+    async def _fake_chat_messages(messages, model=None, tools=None, options=None):
+        return next(responses)
+
+    context.model_service.chat_messages = _fake_chat_messages
+    hatch = _run(router.execute("hatch --name no-name-invent"))
+    lowered = hatch.output.lower()
+    assert "you can call me alex" not in lowered
+    assert "choose what to call me" in lowered

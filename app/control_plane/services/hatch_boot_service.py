@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Dict, Optional
 
 from app.agent.boot_linter import lint_boot_message
@@ -24,7 +25,8 @@ FRESH_BOOT_SYSTEM_BLOCK = """
 You are speaking directly to the user. Speak in first person ("I/me").
 Never say: "this agent", "as an AI", "language model", "system prompt", or anything meta about prompts/instructions.
 Never claim an "operational identity", legal identity, or real-world persona.
-If asked whether your name is real, answer plainly: "I don't have a real name, but you can call me <name>".
+Never invent or assign yourself a name.
+If asked about your name, say you don't have a set name yet and ask what they want to call you.
 Your first message must feel natural and human, not scripted or robotic.
 Do not use headings, numbered lists, bullet points, or questionnaire formatting.
 Ask at most 1-2 short questions total. Prefer combining related questions into one sentence.
@@ -121,7 +123,7 @@ class HatchBootService:
                         "keys": sorted(parsed_profile.keys()),
                     },
                 )
-            visible_message = stripped.strip()
+            visible_message = self._sanitize_boot_message(stripped.strip())
             if profile_payload and visible_message:
                 break
 
@@ -143,6 +145,7 @@ class HatchBootService:
             else:
                 self._mark_degraded(agent.id, reason=last_error or "boot profile missing")
                 raise ValidationError("Boot profile generation failed", details={"agent_id": agent.id, "error": last_error})
+        profile_payload = self._normalize_profile_payload(profile_payload, agent=agent)
 
         lint_problems = lint_boot_message(visible_message, settings)
         if lint_problems:
@@ -157,7 +160,7 @@ class HatchBootService:
                     extra={"event": "boot_rewrite_attempt", "agent_id": agent.id, "attempt": 1},
                 )
                 rewritten = await self._rewrite_boot_message(agent_id=agent.id, model=agent.model, previous=visible_message)
-                rewritten = rewritten.strip()
+                rewritten = self._sanitize_boot_message(rewritten.strip())
                 rewritten_problems = lint_boot_message(rewritten, settings)
                 if not rewritten_problems:
                     visible_message = rewritten
@@ -246,6 +249,7 @@ class HatchBootService:
             "Constraints: first person only, no lists/headings, no forbidden meta phrasing, "
             "avoid canned assistant intros, keep a warm adaptive-casual voice, "
             "never mention operational identity or real-world identity claims, "
+            "do not assign yourself a name; ask the user what to call you, "
             f"max {settings.TC_BOOT_MAX_WORDS} words, max {settings.TC_BOOT_MAX_QUESTIONS} question marks."
         )
         return await self.model_service.chat_messages(
@@ -299,8 +303,7 @@ class HatchBootService:
         display_name = (
             str(existing.get("agent_display_name") or "")
             or str(agent.agent_profile_agent_name or "")
-            or str(agent.name or "")
-            or "Agent"
+            or "Assistant"
         ).strip()
         voice = existing.get("agent_voice")
         if not isinstance(voice, list) or not voice:
@@ -331,6 +334,35 @@ class HatchBootService:
                 "ask_tone": bool(onboarding_intent.get("ask_tone", False)),
             },
         }
+
+    @staticmethod
+    def _normalize_profile_payload(profile: Dict[str, Any], *, agent: Any) -> Dict[str, Any]:
+        normalized = dict(profile or {})
+        existing_profile = dict(agent.profile_json) if isinstance(agent.profile_json, dict) else {}
+        preferred = (
+            str(agent.agent_profile_agent_name or "").strip()
+            or str(existing_profile.get("agent_display_name") or "").strip()
+            or "Assistant"
+        )
+        normalized["agent_display_name"] = preferred
+        return normalized
+
+    @staticmethod
+    def _sanitize_boot_message(text: str) -> str:
+        cleaned = (text or "").strip()
+        if not cleaned:
+            return cleaned
+        cleaned = re.sub(
+            r"(?i)\bi don't have a real name,\s*but you can call me\s+[A-Za-z][\w\-]{1,31}\b",
+            "I don't have a set name yet, and you can choose what to call me",
+            cleaned,
+        )
+        cleaned = re.sub(
+            r"(?i)\byou can call me\s+[A-Za-z][\w\-]{1,31}\b",
+            "you can choose what to call me",
+            cleaned,
+        )
+        return cleaned
 
     @staticmethod
     def _boot_generation_options() -> Dict[str, Any]:

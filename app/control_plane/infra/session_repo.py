@@ -223,7 +223,7 @@ class SessionRepository:
     def list_messages(self, session_id: str) -> List[SessionMessageRecord]:
         with closing(self._connect()) as conn:
             rows = conn.execute(
-                "SELECT * FROM agent_messages WHERE session_id = ? ORDER BY created_at ASC",
+                "SELECT * FROM agent_messages WHERE session_id = ? ORDER BY id ASC",
                 (session_id,),
             ).fetchall()
         return [self._row_to_message(row) for row in rows]

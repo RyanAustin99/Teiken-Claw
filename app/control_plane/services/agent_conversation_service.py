@@ -64,6 +64,13 @@ RESPONSE_META_BANLIST = [
     "keep it clean and professional",
 ]
 
+ONBOARDING_PENDING_BLOCK = (
+    "Onboarding is still in progress. "
+    "Do not assign yourself a name. "
+    "Ask the user what to call them and what they want to call you. "
+    "If the user is casual and doesn't answer yet, respond casually but include one short onboarding follow-up question."
+)
+
 
 @dataclass
 class ConversationResponse:
@@ -143,6 +150,8 @@ class AgentConversationService:
         transcript = self.session_service.get_transcript(session_id)
         history = transcript[-30:]
         messages: List[Dict[str, str]] = [{"role": "system", "content": system_prompt}]
+        if agent.onboarding_state == AgentOnboardingState.WAITING_USER_PREFS:
+            messages.append({"role": "system", "content": ONBOARDING_PENDING_BLOCK})
         for item in history:
             if item.role not in {"user", "assistant"}:
                 continue
