@@ -126,7 +126,19 @@ class HatchBootService:
                 break
 
         if not profile_payload:
-            if not overwrite_profile and isinstance(agent.profile_json, dict):
+            if isinstance(agent.profile_json, dict) and agent.profile_json:
+                profile_payload = dict(agent.profile_json)
+                logger.warning(
+                    "Boot profile missing, using existing profile",
+                    extra={"event": "boot_profile_missing_use_existing", "agent_id": agent.id},
+                )
+            elif visible_message:
+                profile_payload = self._fallback_profile(agent=agent)
+                logger.warning(
+                    "Boot profile missing, using synthesized fallback",
+                    extra={"event": "boot_profile_missing_fallback", "agent_id": agent.id},
+                )
+            elif not overwrite_profile and isinstance(agent.profile_json, dict):
                 profile_payload = dict(agent.profile_json)
             else:
                 self._mark_degraded(agent.id, reason=last_error or "boot profile missing")
@@ -280,6 +292,45 @@ class HatchBootService:
             )
         except Exception:
             logger.exception("Failed to mark agent degraded", extra={"agent_id": agent_id, "reason": reason})
+
+    @staticmethod
+    def _fallback_profile(*, agent: Any) -> Dict[str, Any]:
+        existing = dict(agent.profile_json) if isinstance(agent.profile_json, dict) else {}
+        display_name = (
+            str(existing.get("agent_display_name") or "")
+            or str(agent.agent_profile_agent_name or "")
+            or str(agent.name or "")
+            or "Agent"
+        ).strip()
+        voice = existing.get("agent_voice")
+        if not isinstance(voice, list) or not voice:
+            voice = ["calm", "direct"]
+        else:
+            voice = [str(item).strip() for item in voice if str(item).strip()][:3] or ["calm", "direct"]
+        principles = existing.get("agent_principles")
+        if not isinstance(principles, list) or not principles:
+            principles = ["Be useful", "Be concise", "Be honest"]
+        else:
+            principles = [str(item).strip() for item in principles if str(item).strip()][:6] or [
+                "Be useful",
+                "Be concise",
+                "Be honest",
+            ]
+        onboarding_intent = existing.get("onboarding_intent")
+        if not isinstance(onboarding_intent, dict):
+            onboarding_intent = {}
+        return {
+            **existing,
+            "agent_display_name": display_name,
+            "agent_voice": voice,
+            "agent_principles": principles,
+            "onboarding_intent": {
+                "ask_user_name": bool(onboarding_intent.get("ask_user_name", True)),
+                "ask_agent_name": bool(onboarding_intent.get("ask_agent_name", True)),
+                "ask_purpose": bool(onboarding_intent.get("ask_purpose", True)),
+                "ask_tone": bool(onboarding_intent.get("ask_tone", False)),
+            },
+        }
 
     @staticmethod
     def _boot_generation_options() -> Dict[str, Any]:

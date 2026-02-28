@@ -1,7 +1,7 @@
 import asyncio
 
 from app.control_plane.bootstrap import build_context
-from app.control_plane.domain.models import AgentOnboardingState
+from app.control_plane.domain.models import AgentOnboardingState, RuntimeStatus
 from app.control_plane.tui.command_router import TuiCommandRouter
 from app.memory.store import get_memory_store
 
@@ -68,3 +68,42 @@ def test_hatch_boot_persists_identity_and_transitions_after_reply(tmp_path):
     memories_after = get_memory_store().list_memories(scope=f"agent:{agent.id}", limit=100)
     prefs_mem = [m for m in memories_after if getattr(m, "key", None) == "user_prefs"]
     assert prefs_mem, "expected USER_PREFS memory entry"
+
+
+def test_hatch_boot_synthesizes_profile_when_tc_profile_missing(tmp_path):
+    context = build_context(cli_data_dir=str(tmp_path / "cp_data"))
+    router = TuiCommandRouter(context)
+
+    responses = iter(
+        [
+            "Hey, what should I call you, and what should you call me?",
+            "Sounds good to me.",
+        ]
+    )
+
+    async def _fake_chat_messages(messages, model=None, tools=None, options=None):
+        return next(responses)
+
+    context.model_service.chat_messages = _fake_chat_messages
+
+    hatch = _run(router.execute("hatch --name fallback-agent"))
+    assert "Started runtime and opened chat session" in hatch.output
+    assert "First message boot failed" not in hatch.output
+
+    agent = context.agent_service.get_agent("fallback-agent")
+    assert agent is not None
+    assert agent.status != RuntimeStatus.DEGRADED
+    assert agent.degraded_reason is None
+    assert agent.onboarding_state == AgentOnboardingState.WAITING_USER_PREFS
+    assert agent.profile_json is not None
+    assert agent.profile_json.get("agent_display_name") == "fallback-agent"
+    assert agent.profile_json.get("agent_voice")
+    assert agent.profile_json.get("agent_principles")
+    assert isinstance(agent.profile_json.get("onboarding_intent"), dict)
+
+    transcript = context.session_service.get_transcript(router.active_session_id)
+    assert transcript
+    assistant_messages = [item.content for item in transcript if item.role == "assistant"]
+    assert assistant_messages
+    assert all("<tc_profile>" not in item.lower() for item in assistant_messages)
+    assert any(item.strip() for item in assistant_messages)
