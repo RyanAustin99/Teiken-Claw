@@ -18,6 +18,7 @@ def test_hatch_recovery_message_includes_correlation_and_logs() -> None:
     )
     rendered = HatchScreen._build_recovery_message("Hatch failed while starting runtime.", payload)
     assert "Hatch failed while starting runtime." in rendered
+    assert "Reason: Boom" in rendered
     assert "Recovery actions:" in rendered
     assert "code=START_FAIL" in rendered
     assert "correlation_id=cid-123" in rendered
@@ -30,3 +31,15 @@ def test_safe_set_status_ignores_missing_agent(tmp_path) -> None:
     screen.context = context
     # Should not raise when agent does not exist.
     screen._safe_set_status("missing-agent", RuntimeStatus.CRASHED, "boom")
+
+
+def test_hatch_recovery_message_uses_details_when_unexpected() -> None:
+    payload = ErrorPayload(
+        message="Unexpected error",
+        code="UNEXPECTED",
+        details="WinError 123 invalid path",
+        correlation_id="cid-456",
+        logs_path="C:/logs",
+    )
+    rendered = HatchScreen._build_recovery_message("Hatch failed before runtime start.", payload)
+    assert "Reason: WinError 123 invalid path" in rendered

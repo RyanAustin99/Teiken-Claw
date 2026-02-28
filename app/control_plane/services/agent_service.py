@@ -39,7 +39,13 @@ class AgentService:
             raise ValidationError(f"Agent name already exists: {name}")
         self._validate_tool_profile(tool_profile, allow_dangerous_override=allow_dangerous_override)
         workspace = Path(workspace_path) if workspace_path else self.workspace_root / name
-        workspace.mkdir(parents=True, exist_ok=True)
+        try:
+            workspace.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise ValidationError(
+                "Could not create agent workspace. Use a different name or workspace path.",
+                details={"workspace_path": str(workspace), "error": str(exc)},
+            ) from exc
         return self.repo.create(
             name=name,
             description=description,

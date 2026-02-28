@@ -6,6 +6,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Button, Input, Select, Static
 
+from app.control_plane.domain.errors import ValidationError
 from app.control_plane.domain.models import RunnerType, RuntimeStatus
 from app.control_plane.tui.navigation import Route
 from app.control_plane.tui.screens.base import BaseControlScreen
@@ -97,7 +98,7 @@ class HatchScreen(BaseControlScreen):
         try:
             name = self.name_input.value.strip()
             if not name:
-                raise ValueError("Name is required.")
+                raise ValidationError("Agent name is required.")
             tool_profile = str(self.tool_profile.value)
             existing = self.context.agent_service.get_agent(name)
             if existing:
@@ -179,6 +180,12 @@ class HatchScreen(BaseControlScreen):
     @staticmethod
     def _build_recovery_message(summary: str, payload: ErrorPayload) -> str:
         lines = [summary]
+        reason = (payload.message or "").strip()
+        details = (payload.details or "").strip()
+        if reason and reason.lower() != "unexpected error":
+            lines.append(f"Reason: {reason}")
+        elif details:
+            lines.append(f"Reason: {details}")
         lines.append("Recovery actions: Open Config, Run Doctor, Go Models, Edit Agent, Retry Start.")
         meta: list[str] = []
         if payload.code:
