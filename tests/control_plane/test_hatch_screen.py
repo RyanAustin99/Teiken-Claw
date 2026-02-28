@@ -43,3 +43,11 @@ def test_hatch_recovery_message_uses_details_when_unexpected() -> None:
     )
     rendered = HatchScreen._build_recovery_message("Hatch failed before runtime start.", payload)
     assert "Reason: WinError 123 invalid path" in rendered
+
+
+def test_hatch_auto_name_generation_is_non_empty(tmp_path) -> None:
+    context = build_context(cli_data_dir=str(tmp_path / "cp_data"))
+    screen = HatchScreen(context)
+    generated = screen._next_agent_name()
+    assert generated.startswith("hatch-")
+    assert len(generated) > len("hatch-")
