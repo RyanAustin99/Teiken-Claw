@@ -27,7 +27,7 @@ def test_hatch_boot_persists_identity_and_transitions_after_reply(tmp_path):
         ]
     )
 
-    async def _fake_chat_messages(messages, model=None, tools=None):
+    async def _fake_chat_messages(messages, model=None, tools=None, options=None):
         return next(responses)
 
     context.model_service.chat_messages = _fake_chat_messages
@@ -44,6 +44,12 @@ def test_hatch_boot_persists_identity_and_transitions_after_reply(tmp_path):
     memories = get_memory_store().list_memories(scope=f"agent:{agent.id}", limit=100)
     identity_mem = [m for m in memories if getattr(m, "key", None) == "identity"]
     assert identity_mem, "expected AGENT_SELF identity memory"
+    principles_mem = [m for m in memories if getattr(m, "key", None) == "boot_principles"]
+    assert principles_mem, "expected AGENT_SELF boot principles memory"
+    assert "hello, i am your agent" not in hatch.output.lower()
+    assert "how can i help you today" not in hatch.output.lower()
+    assert "teiken claw agent" not in hatch.output.lower()
+    assert "operational identity" not in hatch.output.lower()
 
     reply = _run(
         router.execute(
@@ -62,4 +68,3 @@ def test_hatch_boot_persists_identity_and_transitions_after_reply(tmp_path):
     memories_after = get_memory_store().list_memories(scope=f"agent:{agent.id}", limit=100)
     prefs_mem = [m for m in memories_after if getattr(m, "key", None) == "user_prefs"]
     assert prefs_mem, "expected USER_PREFS memory entry"
-

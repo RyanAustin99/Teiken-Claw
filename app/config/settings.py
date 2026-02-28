@@ -95,6 +95,18 @@ class Settings(BaseSettings):
         "language model",
         "system prompt",
         "developer instructions",
+        "operational identity",
+        "teiken claw agent",
+        "how can i assist you today",
+        "keep it respectful",
+        "keep it clean and professional",
+    ]
+    TC_BOOT_CANNED_PHRASES: List[str] = [
+        "hello, i am your agent",
+        "hello, i am an agent",
+        "hello! i am your assistant",
+        "how can i help you today",
+        "i am here to help you",
     ]
     TC_BOOT_LIST_MARKERS: List[str] = [
         r"^\s*[-*•]\s+",
@@ -103,6 +115,8 @@ class Settings(BaseSettings):
     ]
     TC_BOOT_RETRY_ON_LINT_FAIL: int = 1
     TC_BOOT_DIRECTIVES: Optional[str] = None
+    TC_BOOT_TEMPERATURE: float = 0.7
+    TC_BOOT_TOP_P: float = 0.9
     
     # =========================================================================
     # Memory Configuration

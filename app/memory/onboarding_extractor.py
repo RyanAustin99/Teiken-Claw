@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 
 _NAME_PATTERNS = [
     re.compile(r"\bcall me\s+([A-Za-z][\w\-]{1,31})\b", re.IGNORECASE),
+    re.compile(r"\byou can call me\s+([A-Za-z][\w\-]{1,31})\b", re.IGNORECASE),
     re.compile(r"\bmy name is\s+([A-Za-z][\w\-]{1,31})\b", re.IGNORECASE),
     re.compile(r"\bi(?:'m| am)\s+([A-Za-z][\w\-]{1,31})\b", re.IGNORECASE),
     re.compile(r"\bname'?s\s+([A-Za-z][\w\-]{1,31})\b", re.IGNORECASE),
@@ -16,6 +17,7 @@ _NAME_PATTERNS = [
 
 _AGENT_NAME_PATTERNS = [
     re.compile(r"\bcall (?:yourself|you)\s+([A-Za-z][\w\-]{1,31})\b", re.IGNORECASE),
+    re.compile(r"\byou can call yourself\s+([A-Za-z][\w\-]{1,31})\b", re.IGNORECASE),
     re.compile(r"\bi(?:'ll| will)\s+call you\s+([A-Za-z][\w\-]{1,31})\b", re.IGNORECASE),
     re.compile(r"\byour name should be\s+([A-Za-z][\w\-]{1,31})\b", re.IGNORECASE),
 ]
@@ -23,12 +25,20 @@ _AGENT_NAME_PATTERNS = [
 _PURPOSE_PATTERNS = [
     re.compile(r"\byour job is to\s+(.+)$", re.IGNORECASE),
     re.compile(r"\byour purpose is\s+(.+)$", re.IGNORECASE),
+    re.compile(r"\bi want you to\s+(.+)$", re.IGNORECASE),
     re.compile(r"\bi need you to\s+(.+)$", re.IGNORECASE),
 ]
 
 _TONE_PATTERNS = [
     re.compile(r"\b(be|sound)\s+(casual|direct|formal|witty|friendly|concise)\b", re.IGNORECASE),
     re.compile(r"\bkeep it\s+(casual|direct|formal|witty|friendly|concise)\b", re.IGNORECASE),
+]
+
+_PROFANITY_PATTERNS = [
+    re.compile(r"\b(you can|feel free to|please)\s+(swear|cuss|use profanity)\b", re.IGNORECASE),
+    re.compile(r"\b(swear|cuss|profanity)\s+(is|it's|its)\s+(fine|ok|okay|allowed)\b", re.IGNORECASE),
+    re.compile(r"\b(no|dont|don't)\s+(swearing|cussing|profanity)\b", re.IGNORECASE),
+    re.compile(r"\b(keep it clean|no cussing|no cursing)\b", re.IGNORECASE),
 ]
 
 
@@ -44,6 +54,7 @@ def extract_onboarding_prefs(
         "agent_name_preference": None,
         "agent_purpose": None,
         "tone_preference": None,
+        "profanity_level": None,
     }
 
     if not text:
@@ -72,10 +83,21 @@ def extract_onboarding_prefs(
     for pattern in _TONE_PATTERNS:
         match = pattern.search(text)
         if match:
-            tone = _sanitize_text(match.group(2))
+            tone_group = match.group(2) if match.lastindex and match.lastindex >= 2 else match.group(1)
+            tone = _sanitize_text(tone_group)
             if tone:
                 result["tone_preference"] = tone.lower()
             break
+
+    lowered = text.lower()
+    for pattern in _PROFANITY_PATTERNS:
+        if not pattern.search(text):
+            continue
+        if "no " in lowered or "don't" in lowered or "dont" in lowered or "keep it clean" in lowered:
+            result["profanity_level"] = "none"
+        elif "swear" in lowered or "cuss" in lowered or "profanity" in lowered:
+            result["profanity_level"] = "allowed"
+        break
 
     return result
 
@@ -89,6 +111,7 @@ def parse_llm_onboarding_json(raw: str) -> Dict[str, Optional[str]]:
             "agent_name_preference": None,
             "agent_purpose": None,
             "tone_preference": None,
+            "profanity_level": None,
         }
     if "{" in payload and "}" in payload:
         payload = payload[payload.find("{") : payload.rfind("}") + 1]
@@ -101,9 +124,12 @@ def parse_llm_onboarding_json(raw: str) -> Dict[str, Optional[str]]:
         "agent_name_preference": _sanitize_name(data.get("agent_name_preference")),
         "agent_purpose": _sanitize_text(data.get("agent_purpose")),
         "tone_preference": _sanitize_text(data.get("tone_preference")),
+        "profanity_level": _sanitize_text(data.get("profanity_level")),
     }
     if parsed["tone_preference"]:
         parsed["tone_preference"] = parsed["tone_preference"].lower()
+    if parsed["profanity_level"]:
+        parsed["profanity_level"] = parsed["profanity_level"].lower()
     return parsed
 
 
@@ -133,4 +159,3 @@ __all__ = [
     "extract_onboarding_prefs",
     "parse_llm_onboarding_json",
 ]
-

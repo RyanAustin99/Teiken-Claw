@@ -55,6 +55,15 @@ TOOL_PROFILE_DEFAULT_TOOLS: Dict[str, List[str]] = {
     "dangerous": ["all-registered-tools"],
 }
 
+RESPONSE_META_BANLIST = [
+    "operational identity",
+    "as an ai",
+    "language model",
+    "teiken claw agent",
+    "keep it respectful",
+    "keep it clean and professional",
+]
+
 
 @dataclass
 class ConversationResponse:
@@ -120,12 +129,14 @@ class AgentConversationService:
         cfg = self.config_service.load().values
         capability_lines = TOOL_PROFILE_CAPABILITIES.get(agent.tool_profile, TOOL_PROFILE_CAPABILITIES["safe"])
         tool_lines = self._resolve_tools(agent.tool_profile)
+        style_lines = self._resolve_style_lines(agent)
         skill_lines = self._resolve_skills()
         system_prompt = self.prompt_template_service.render(
             agent,
             default_model=cfg.default_model,
             capability_lines=capability_lines,
             tool_lines=tool_lines,
+            style_lines=style_lines,
             skill_lines=skill_lines,
         )
 
@@ -166,6 +177,7 @@ class AgentConversationService:
         _, stripped, _ = extract_tc_profile(visible_response)
         visible_response = stripped.strip() or visible_response
         visible_response = await self._enforce_first_person(visible_response, model=agent.model)
+        visible_response = await self._enforce_output_guardrails(visible_response, model=agent.model)
         return ConversationResponse(response=visible_response, tool_events=loop_result.tool_events)
 
     async def _maybe_process_onboarding_reply(self, *, agent: AgentRecord, session, message: str) -> None:
@@ -233,6 +245,7 @@ class AgentConversationService:
         agent_name = extracted.get("agent_name_preference")
         purpose = extracted.get("agent_purpose")
         tone = extracted.get("tone_preference")
+        profanity_level = self._normalize_profanity_level(extracted.get("profanity_level"))
 
         if user_name:
             patch["agent_profile_user_name"] = user_name
@@ -243,6 +256,8 @@ class AgentConversationService:
             patch["agent_profile_purpose"] = purpose
         if tone:
             profile_json["tone_preference"] = tone
+        if profanity_level:
+            profile_json["profanity_level"] = profanity_level
         if profile_json:
             patch["profile_json"] = profile_json
 
@@ -272,7 +287,8 @@ class AgentConversationService:
     ) -> Dict[str, Optional[str]]:
         prompt = (
             "Extract onboarding preferences from the user message. "
-            "Return JSON only with keys: user_preferred_name, agent_name_preference, agent_purpose, tone_preference. "
+            "Return JSON only with keys: user_preferred_name, agent_name_preference, agent_purpose, tone_preference, profanity_level. "
+            "profanity_level must be one of: none, light, allowed, or null. "
             "Use null when uncertain."
         )
         try:
@@ -297,6 +313,7 @@ class AgentConversationService:
                 "agent_name_preference": None,
                 "agent_purpose": None,
                 "tone_preference": None,
+                "profanity_level": None,
             }
 
     async def _enforce_first_person(self, text: str, *, model: Optional[str]) -> str:
@@ -326,7 +343,27 @@ class AgentConversationService:
             or payload.get("agent_name_preference")
             or payload.get("agent_purpose")
             or payload.get("tone_preference")
+            or payload.get("profanity_level")
         )
+
+    @staticmethod
+    def _normalize_profanity_level(value: Optional[str]) -> Optional[str]:
+        if not value:
+            return None
+        normalized = str(value).strip().lower()
+        aliases = {
+            "no": "none",
+            "none": "none",
+            "clean": "none",
+            "light": "light",
+            "some": "light",
+            "mild": "light",
+            "allowed": "allowed",
+            "yes": "allowed",
+            "full": "allowed",
+            "profanity_ok": "allowed",
+        }
+        return aliases.get(normalized)
 
     def _resolve_tools(self, tool_profile: str) -> List[str]:
         try:
@@ -350,6 +387,59 @@ class AgentConversationService:
             return sorted(get_skill_loader().list_skills())
         except Exception:
             return []
+
+    @staticmethod
+    def _resolve_style_lines(agent: AgentRecord) -> List[str]:
+        profile = agent.profile_json if isinstance(agent.profile_json, dict) else {}
+        tone = str(profile.get("tone_preference") or "neutral").strip()
+        profanity = str(profile.get("profanity_level") or "light").strip().lower()
+        if profanity not in {"none", "light", "allowed"}:
+            profanity = "light"
+        profanity_rule = {
+            "none": "No profanity.",
+            "light": "Light profanity is acceptable when user tone indicates it.",
+            "allowed": "Profanity is allowed when user requests it; never use harassment or hate speech.",
+        }[profanity]
+        return [
+            f"Tone preference: {tone}",
+            f"Profanity level: {profanity}",
+            profanity_rule,
+            "Never force 'respectful/professional' admonitions when the user is casually swearing.",
+            "Never claim an operational identity or real-world persona.",
+        ]
+
+    async def _enforce_output_guardrails(self, text: str, *, model: Optional[str]) -> str:
+        normalized = (text or "").strip()
+        lowered = normalized.lower()
+        if not normalized:
+            return normalized
+        if not any(phrase in lowered for phrase in RESPONSE_META_BANLIST):
+            return normalized
+        try:
+            rewritten = await self.model_service.chat_messages(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "Rewrite naturally in first person. Remove meta identity claims, "
+                            "remove 'as an AI/language model/operational identity' phrasing, "
+                            "and remove scripted tone-policing lines like 'keep it respectful/clean'. "
+                            "Keep the same intent and constraints."
+                        ),
+                    },
+                    {"role": "user", "content": normalized},
+                ],
+                model=model,
+            )
+            candidate = (rewritten or "").strip()
+            if candidate and not any(phrase in candidate.lower() for phrase in RESPONSE_META_BANLIST):
+                return candidate
+        except Exception:
+            pass
+        fallback = normalized.replace("operational identity", "name")
+        fallback = fallback.replace("As an AI", "").replace("as an AI", "")
+        fallback = fallback.replace("language model", "assistant")
+        return fallback.strip()
 
     def _audit_log(
         self,

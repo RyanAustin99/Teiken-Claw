@@ -92,7 +92,7 @@ class TuiCommandRouter:
                 "  doctor [--export]",
                 "  models [list|select <model>|validate [model]|pull <model>]",
                 "  agents [list|start|stop|restart|default|delete --yes] <agent>",
-                "  hatch --name <name> [--description <text>] [--model <model>] [--tool-profile <safe|balanced|dangerous>] [--allow-dangerous] [--no-start]",
+                "  hatch --name <name> [--description <text>] [--model <model>] [--tool-profile <safe|balanced|dangerous>] [--allow-dangerous] [--no-start] (default balanced)",
                 "  chat [start <agent>|continue <agent>|send <message>|history [--limit N]|receipts [--limit N]|stop]",
                 "  config [show|set <key> <value> ...]",
                 "  logs [--limit N] [--audit] [--export]",
@@ -558,7 +558,7 @@ class TuiCommandRouter:
             "description": None,
             "model": None,
             "runner": RunnerType.INPROCESS.value,
-            "tool_profile": "safe",
+            "tool_profile": "balanced",
             "allow_dangerous": False,
             "no_start": False,
         }

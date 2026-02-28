@@ -4,6 +4,7 @@ from pathlib import Path
 from app.control_plane.bootstrap import build_context
 from app.control_plane.domain.models import AgentOnboardingState
 from app.control_plane.domain.models import OnboardingStatus
+from app.memory.onboarding_extractor import extract_onboarding_prefs
 from app.memory.store import get_memory_store
 
 
@@ -32,7 +33,7 @@ def test_onboarding_reply_extraction_transitions_agent_active(tmp_path):
         "Hey, what should I call you and what should I call myself?",
     )
 
-    async def _fake_chat_messages(messages, model=None, tools=None):
+    async def _fake_chat_messages(messages, model=None, tools=None, options=None):
         return "Perfect, I’m ready."
 
     context.model_service.chat_messages = _fake_chat_messages
@@ -74,13 +75,34 @@ def test_conversation_rewrites_third_person_self_reference(tmp_path):
 
     outputs = iter(["this agent can help you.", "I can help you."])
 
-    async def _fake_chat_messages(messages, model=None, tools=None):
+    async def _fake_chat_messages(messages, model=None, tools=None, options=None):
         return next(outputs)
 
     context.model_service.chat_messages = _fake_chat_messages
     result = _run(context.conversation_service.generate_response(agent.id, session.id, "hello"))
     assert "i can help you" in result.lower()
     assert "this agent" not in result.lower()
+
+
+def test_onboarding_extractor_supports_casual_name_and_purpose_phrasing():
+    extracted = extract_onboarding_prefs(
+        user_text="You can call me Ryan, call yourself Forge, and I want you to automate my releases.",
+        last_assistant_text="",
+        agent_profile_json={"agent_display_name": "OldName"},
+    )
+    assert extracted["user_preferred_name"] == "Ryan"
+    assert extracted["agent_name_preference"] == "Forge"
+    assert "automate my releases" in (extracted["agent_purpose"] or "").lower()
+
+
+def test_onboarding_extractor_captures_profanity_preference():
+    extracted = extract_onboarding_prefs(
+        user_text="You can swear if you want, keep it casual.",
+        last_assistant_text="",
+        agent_profile_json={"agent_display_name": "OldName"},
+    )
+    assert extracted["profanity_level"] == "allowed"
+    assert extracted["tone_preference"] == "casual"
 
 
 def test_conversation_uses_system_prompt_after_onboarding(tmp_path):
@@ -99,7 +121,7 @@ def test_conversation_uses_system_prompt_after_onboarding(tmp_path):
 
     captured = {}
 
-    async def _fake_chat_messages(messages, model=None, tools=None):
+    async def _fake_chat_messages(messages, model=None, tools=None, options=None):
         captured["messages"] = messages
         captured["model"] = model
         return "ok-response"
@@ -113,7 +135,9 @@ def test_conversation_uses_system_prompt_after_onboarding(tmp_path):
     system_prompt = captured["messages"][0]["content"]
     assert "Workspace" in system_prompt
     assert "Tool Profile" in system_prompt
+    assert "Style Profile" in system_prompt
     assert "Skills" in system_prompt
+    assert "hatched Teiken Claw agent" not in system_prompt
 
 
 def test_conversation_executes_tool_envelope_and_writes_file(tmp_path):
@@ -141,7 +165,7 @@ def test_conversation_executes_tool_envelope_and_writes_file(tmp_path):
         ]
     )
 
-    async def _fake_chat_messages(messages, model=None, tools=None):
+    async def _fake_chat_messages(messages, model=None, tools=None, options=None):
         return next(outputs)
 
     context.model_service.chat_messages = _fake_chat_messages
@@ -170,7 +194,7 @@ def test_conversation_does_not_execute_markdown_code_fence_tool_text(tmp_path):
     context.agent_service.update_agent(agent.id, {"is_fresh": False, "onboarding_state": AgentOnboardingState.ACTIVE})
     context.session_service.update_onboarding(session.id, status=OnboardingStatus.COMPLETE, step=3)
 
-    async def _fake_chat_messages(messages, model=None, tools=None):
+    async def _fake_chat_messages(messages, model=None, tools=None, options=None):
         return '```bash\nfiles.write("hello.md", "Hello")\n```'
 
     context.model_service.chat_messages = _fake_chat_messages
@@ -206,7 +230,7 @@ def test_conversation_denies_disallowed_tool_profile(tmp_path):
         ]
     )
 
-    async def _fake_chat_messages(messages, model=None, tools=None):
+    async def _fake_chat_messages(messages, model=None, tools=None, options=None):
         return next(outputs)
 
     context.model_service.chat_messages = _fake_chat_messages
@@ -216,3 +240,26 @@ def test_conversation_denies_disallowed_tool_profile(tmp_path):
     assert result.tool_events[0].ok is False
     assert result.tool_events[0].error["type"] == "not_allowed"
     assert not (Path(agent.workspace_path) / "hello.md").exists()
+
+
+def test_conversation_rewrites_meta_identity_language(tmp_path):
+    context = build_context(cli_data_dir=str(tmp_path / "cp_data"))
+    agent = context.agent_service.create_agent(name="meta-guard-agent")
+    session = context.session_service.new_session(agent.id, title="chat")
+    context.agent_service.update_agent(agent.id, {"is_fresh": False, "onboarding_state": AgentOnboardingState.ACTIVE})
+
+    outputs = iter(
+        [
+            "My operational identity is Alex. Let's keep it respectful.",
+            "I can help with that. What do you want to tackle first?",
+        ]
+    )
+
+    async def _fake_chat_messages(messages, model=None, tools=None, options=None):
+        return next(outputs)
+
+    context.model_service.chat_messages = _fake_chat_messages
+    result = _run(context.conversation_service.generate_response(agent.id, session.id, "hey"))
+    lowered = result.lower()
+    assert "operational identity" not in lowered
+    assert "keep it respectful" not in lowered

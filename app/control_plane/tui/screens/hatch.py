@@ -26,7 +26,7 @@ class HatchScreen(BaseControlScreen):
         self.workspace_input = Input(placeholder="Workspace path (optional)", id="hatch-workspace")
         self.tool_profile = Select(
             options=[("safe", "safe"), ("balanced", "balanced"), ("dangerous", "dangerous")],
-            value="safe",
+            value="balanced",
             id="hatch-tool-profile",
         )
         self.status_box = Static(classes="cp-card")

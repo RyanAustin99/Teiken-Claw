@@ -23,11 +23,16 @@ logger = get_logger(__name__)
 FRESH_BOOT_SYSTEM_BLOCK = """
 You are speaking directly to the user. Speak in first person ("I/me").
 Never say: "this agent", "as an AI", "language model", "system prompt", or anything meta about prompts/instructions.
-Your first message must feel natural and human, not scripted.
+Never claim an "operational identity", legal identity, or real-world persona.
+If asked whether your name is real, answer plainly: "I don't have a real name, but you can call me <name>".
+Your first message must feel natural and human, not scripted or robotic.
 Do not use headings, numbered lists, bullet points, or questionnaire formatting.
 Ask at most 1-2 short questions total. Prefer combining related questions into one sentence.
+Avoid cliche assistant intros like "Hello, I am your agent" or "How can I help you today?".
+Use a warm adaptive-casual tone and sound like a real person meeting someone.
 You must learn: what to call the user, and what they want to call you. If it fits naturally, also ask what your purpose should be.
-Match the user's tone as it appears; if unknown, be calm, direct, and friendly.
+Match the user's tone as it appears; if unknown, be calm, casual, and friendly.
+Do not scold the user for casual profanity; match tone naturally without harassment or hate speech.
 """.strip()
 
 OUTPUT_FORMAT_BLOCK = """
@@ -92,6 +97,7 @@ class HatchBootService:
             raw = await self.model_service.chat_messages(
                 messages=self._build_boot_messages(agent=agent, user_metadata=user_metadata),
                 model=agent.model,
+                options=self._boot_generation_options(),
             )
             parsed_profile, stripped, parse_error = extract_tc_profile(raw)
             if parse_error:
@@ -158,7 +164,15 @@ class HatchBootService:
 
         persisted_profile = profile_payload if overwrite_profile or not agent.profile_json else dict(agent.profile_json)
         if overwrite_profile or not agent.profile_json:
-            self._persist_boot_identity(agent_id=agent.id, profile=persisted_profile)
+            boot_directives = get_boot_directives(agent, settings)
+            try:
+                self._persist_boot_identity(agent_id=agent.id, profile=persisted_profile, directives=boot_directives)
+            except Exception as exc:
+                self._mark_degraded(agent.id, reason=f"boot_memory_persist_failed:{exc}")
+                raise ValidationError(
+                    "Boot identity persistence failed",
+                    details={"agent_id": agent.id, "error": str(exc)},
+                ) from exc
 
         self.agent_service.update_agent(
             agent.id,
@@ -184,7 +198,7 @@ class HatchBootService:
         )
         return visible_message
 
-    def _persist_boot_identity(self, *, agent_id: str, profile: Dict[str, Any]) -> None:
+    def _persist_boot_identity(self, *, agent_id: str, profile: Dict[str, Any], directives: str) -> None:
         identity = {
             "agent_display_name": profile.get("agent_display_name"),
             "agent_voice": profile.get("agent_voice") or [],
@@ -199,11 +213,27 @@ class HatchBootService:
             confidence=1.0,
             metadata={"scope": "AGENT_SELF"},
         )
+        principles_payload = {
+            "directives": directives,
+            "principles": profile.get("agent_principles") or [],
+            "voice": profile.get("agent_voice") or [],
+        }
+        self.memory_store.create_memory(
+            memory_type="semantic",
+            content=json.dumps(principles_payload, ensure_ascii=False),
+            scope=f"agent:{agent_id}",
+            source="BOOT",
+            key="boot_principles",
+            confidence=1.0,
+            metadata={"scope": "AGENT_SELF"},
+        )
 
     async def _rewrite_boot_message(self, *, agent_id: str, model: Optional[str], previous: str) -> str:
         prompt = (
             "Rewrite this opening message naturally. "
             "Constraints: first person only, no lists/headings, no forbidden meta phrasing, "
+            "avoid canned assistant intros, keep a warm adaptive-casual voice, "
+            "never mention operational identity or real-world identity claims, "
             f"max {settings.TC_BOOT_MAX_WORDS} words, max {settings.TC_BOOT_MAX_QUESTIONS} question marks."
         )
         return await self.model_service.chat_messages(
@@ -212,6 +242,7 @@ class HatchBootService:
                 {"role": "user", "content": previous},
             ],
             model=model,
+            options=self._boot_generation_options(),
         )
 
     def _build_boot_messages(self, *, agent: Any, user_metadata: Optional[Dict[str, str]]) -> list[dict[str, str]]:
@@ -249,6 +280,13 @@ class HatchBootService:
             )
         except Exception:
             logger.exception("Failed to mark agent degraded", extra={"agent_id": agent_id, "reason": reason})
+
+    @staticmethod
+    def _boot_generation_options() -> Dict[str, Any]:
+        return {
+            "temperature": float(getattr(settings, "TC_BOOT_TEMPERATURE", 0.7) or 0.7),
+            "top_p": float(getattr(settings, "TC_BOOT_TOP_P", 0.9) or 0.9),
+        }
 
 
 __all__ = [

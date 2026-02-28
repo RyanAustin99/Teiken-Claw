@@ -17,6 +17,7 @@ from textual.widgets import Button, Static
 from app.control_plane.bootstrap import ControlPlaneContext
 from app.control_plane.tui.navigation import Route
 from app.control_plane.tui.palette import PaletteCommand, TeikenCommandProvider
+from app.control_plane.tui.safe_header import SafeHeader
 from app.control_plane.tui.screens import (
     AgentsScreen,
     BootScreen,
@@ -59,6 +60,7 @@ class TeikenControlPlaneApp(App):
         Binding("f1", "open_help", "Help"),
         Binding("escape", "back", "Back"),
         Binding("ctrl+k", "command_palette", "Command Palette"),
+        Binding("ctrl+t", "toggle_time_format", "Time Format"),
         Binding("ctrl+s", "save_context", "Save"),
         Binding("ctrl+r", "refresh_screen", "Refresh"),
         Binding("ctrl+l", "focus_logs", "Logs"),
@@ -139,6 +141,15 @@ class TeikenControlPlaneApp(App):
         if callable(saver):
             self.run_worker(self._run_screen_task(saver), group="screen-save", exclusive=True)
 
+    def action_toggle_time_format(self) -> None:
+        config = self.context.config_service.load().values
+        updated = self.context.config_service.save_patch({"clock_24h": not bool(config.clock_24h)}).values
+        self._apply_clock_format(clock_24h=bool(updated.clock_24h))
+        try:
+            self.action_refresh_screen()
+        except Exception:
+            pass
+
     def action_request_quit(self) -> None:
         snapshot = self.context.runtime_supervisor.snapshot()
         if snapshot.runtimes:
@@ -194,6 +205,7 @@ class TeikenControlPlaneApp(App):
             PaletteCommand("Doctor", "Diagnostics", partial(self.open_route, Route.DOCTOR), "Run checks and fixes"),
             PaletteCommand("Logs", "Diagnostics", partial(self.open_route, Route.LOGS), "View and follow logs", key_hint="Ctrl+L"),
             PaletteCommand("Refresh Current Screen", "Runtime", self.action_refresh_screen, "Refresh active view", key_hint="Ctrl+R"),
+            PaletteCommand("Toggle Time Format", "Runtime", self.action_toggle_time_format, "Switch 12h/24h clock", key_hint="Ctrl+T"),
             PaletteCommand("Save Current Screen", "Runtime", self.action_save_context, "Save current form if supported", key_hint="Ctrl+S"),
             PaletteCommand("Start Dev Server", "Runtime", self._start_server, "Start server process"),
             PaletteCommand("Stop Dev Server", "Runtime", self._stop_server, "Stop server process"),
@@ -242,6 +254,17 @@ class TeikenControlPlaneApp(App):
     def _restart_server(self) -> None:
         self.context.runtime_supervisor.restart_dev_server()
         self.action_refresh_screen()
+
+    def _apply_clock_format(self, *, clock_24h: bool) -> None:
+        time_format = "%H:%M:%S" if clock_24h else "%I:%M:%S %p"
+        try:
+            header = self.screen.query_one(SafeHeader)
+        except Exception:
+            return
+        try:
+            header.time_format = time_format
+        except Exception:
+            pass
 
     async def _run_screen_task(self, task_factory) -> None:
         """Run a screen coroutine with deterministic UI error mapping."""

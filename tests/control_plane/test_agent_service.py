@@ -19,3 +19,10 @@ def test_dangerous_profile_requires_override(tmp_path):
     )
     assert created.tool_profile == "dangerous"
 
+
+def test_agent_service_defaults_to_balanced_profile(tmp_path):
+    repo = AgentRepository(tmp_path / "state.db")
+    service = AgentService(repo=repo, workspace_root=tmp_path / "workspace")
+    created = service.create_agent(name="agent-default")
+    assert created.tool_profile == "balanced"
+

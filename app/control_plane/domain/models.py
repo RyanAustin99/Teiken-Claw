@@ -59,6 +59,7 @@ class AppConfig(BaseModel):
     queue_full_policy: QueueFullPolicy = QueueFullPolicy.DENY
     subprocess_runner_enabled: bool = False
     agent_prompt_template_version: str = "1.0.0"
+    clock_24h: bool = False
     max_tool_calls_per_message: int = 3
     max_tool_turns_per_request: int = 8
     tool_call_timeout_sec: int = 30
@@ -85,7 +86,7 @@ class AgentRecord(BaseModel):
     name: str
     description: Optional[str] = None
     model: Optional[str] = None
-    tool_profile: str = "safe"
+    tool_profile: str = "balanced"
     workspace_path: str
     created_at: datetime
     updated_at: datetime

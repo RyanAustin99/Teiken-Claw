@@ -8,7 +8,7 @@ from typing import Iterable
 from app.control_plane.domain.models import AgentRecord
 
 
-DEFAULT_TEMPLATE = """You are {agent_name}, a hatched Teiken Claw agent.
+DEFAULT_TEMPLATE = """You are {agent_name}.
 Description: {agent_description}
 Model: {model_name}
 Workspace: {workspace_path}
@@ -19,6 +19,9 @@ Capabilities:
 Tool Profile: {tool_profile}
 Allowed tools:
 {tools_block}
+
+Style Profile:
+{style_block}
 
 Skills:
 {skills_block}
@@ -38,12 +41,14 @@ class AgentPromptTemplateService:
         default_model: str,
         capability_lines: Iterable[str],
         tool_lines: Iterable[str],
+        style_lines: Iterable[str],
         skill_lines: Iterable[str],
     ) -> str:
         template = self._load_template()
         model_name = agent.model or default_model
         capabilities_block = self._render_lines(capability_lines, fallback="No capability summary available.")
         tools_block = self._render_lines(tool_lines, fallback="No tools declared for this profile.")
+        style_block = self._render_lines(style_lines, fallback="No style overrides.")
         skills_block = self._render_lines(skill_lines, fallback="No skills loaded.")
         return template.format(
             agent_name=agent.name,
@@ -53,6 +58,7 @@ class AgentPromptTemplateService:
             capabilities_block=capabilities_block,
             tool_profile=agent.tool_profile,
             tools_block=tools_block,
+            style_block=style_block,
             skills_block=skills_block,
         )
 

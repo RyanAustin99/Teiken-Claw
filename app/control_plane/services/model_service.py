@@ -116,11 +116,13 @@ class ModelService:
         messages: List[Dict[str, str]],
         model: Optional[str] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
+        options: Optional[Dict[str, Any]] = None,
     ) -> str:
         client = self._client()
         response = await client.chat(
             messages=messages,
             model=model,
             tools=tools,
+            options=options,
         )
         return response.message.content

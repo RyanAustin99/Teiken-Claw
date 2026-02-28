@@ -34,6 +34,9 @@ def test_router_hatch_agents_and_lifecycle(tmp_path):
     router = TuiCommandRouter(context)
 
     hatch, listed, started, stopped = _run(_run_lifecycle(router))
+    agent = context.agent_service.get_agent("tui-agent")
+    assert agent is not None
+    assert agent.tool_profile == "balanced"
     assert "Hatched agent:" in hatch.output
     assert "tui-agent" in listed.output
     assert "Started tui-agent:" in started.output

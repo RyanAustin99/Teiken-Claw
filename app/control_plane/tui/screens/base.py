@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Iterable, Optional
 
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
 from textual.screen import Screen
-from textual.widgets import Button, Footer, Header, Static
+from textual.widgets import Button, Footer, Static
 
 from app.control_plane.bootstrap import ControlPlaneContext
 from app.control_plane.tui.navigation import Route, ROUTE_TITLES
+from app.control_plane.tui.safe_header import SafeHeader
 from app.control_plane.tui.uikit import ErrorBanner, ErrorPayload, map_exception_to_payload
 
 
@@ -30,8 +32,19 @@ class BaseControlScreen(Screen):
     def screen_title(self) -> str:
         return ROUTE_TITLES[self.ROUTE]
 
+    def current_time_format(self) -> str:
+        try:
+            cfg = self.context.config_service.load().values
+            return "%H:%M:%S" if cfg.clock_24h else "%I:%M:%S %p"
+        except Exception:
+            return "%I:%M:%S %p"
+
+    def format_time(self, when: Optional[datetime] = None) -> str:
+        stamp = when or datetime.now()
+        return stamp.strftime(self.current_time_format())
+
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
+        yield SafeHeader(show_clock=True, time_format=self.current_time_format())
         with Container(classes="cp-screen-root"):
             yield Static(self.screen_title, classes="cp-screen-title")
             if self.SUBTITLE:
@@ -49,7 +62,7 @@ class BaseControlScreen(Screen):
         yield Static("Not implemented")
 
     def key_hint_text(self) -> str:
-        return "F1 Help  Esc Back  Ctrl+K Palette  Ctrl+R Refresh  Ctrl+L Logs  Ctrl+Q Quit"
+        return "F1 Help  Esc Back  Ctrl+K Palette  Ctrl+T Time  Ctrl+R Refresh  Ctrl+L Logs  Ctrl+Q Quit"
 
     async def refresh_data(self) -> None:
         """Screen-specific refresh hook."""

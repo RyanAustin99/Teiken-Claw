@@ -354,7 +354,7 @@ def hatch_command(
     description: Optional[str] = typer.Option(None),
     model: Optional[str] = typer.Option(None),
     runner: RunnerType = typer.Option(RunnerType.INPROCESS),
-    tool_profile: str = typer.Option("safe"),
+    tool_profile: str = typer.Option("balanced"),
     allow_dangerous: bool = typer.Option(False, "--allow-dangerous"),
     no_chat: bool = typer.Option(False, "--no-chat"),
 ) -> None:
@@ -557,7 +557,7 @@ def _chat_loop(cp: ControlPlaneContext, agent_id: str, session_id: str) -> None:
             console.print(f"Model: {agent.model or cfg.default_model}")
             continue
         if cmd == "/tools":
-            console.print("Tool profile view is available in agents config (safe by default).")
+            console.print("Tool profile view is available in agents config (balanced by default).")
             continue
         if cmd.startswith("/receipts"):
             limit = 10

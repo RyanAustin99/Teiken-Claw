@@ -24,7 +24,7 @@ class AgentService:
         name: str,
         description: Optional[str] = None,
         model: Optional[str] = None,
-        tool_profile: str = "safe",
+        tool_profile: str = "balanced",
         workspace_path: Optional[str] = None,
         runner_type: Optional[RunnerType] = None,
         auto_restart: bool = True,
