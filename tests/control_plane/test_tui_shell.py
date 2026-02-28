@@ -13,7 +13,7 @@ def test_tui_shell_bindings_and_palette_commands(tmp_path):
     app = TeikenControlPlaneApp(context=context)
 
     keys = {binding.key for binding in app.BINDINGS}
-    assert {"f1", "escape", "ctrl+k", "ctrl+r", "ctrl+l", "ctrl+q", "ctrl+s"}.issubset(keys)
+    assert {"f1", "escape", "ctrl+k", "ctrl+t", "ctrl+r", "ctrl+l", "ctrl+q", "ctrl+s"}.issubset(keys)
 
     commands = list(app.get_palette_commands())
     groups = {command.group for command in commands}

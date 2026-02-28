@@ -126,44 +126,47 @@ class RuntimeSupervisor:
         cleanup_errors: list[str] = []
         deleted = False
         resolved_agent_id = agent_id
-
         try:
-            agent = self.agent_service.get_agent(agent_id)
-            resolved_agent_id = agent.id if agent else agent_id
-        except Exception as exc:
-            cleanup_errors.append(f"agent_lookup_failed:{exc}")
-
-        try:
-            await self.stop_agent(resolved_agent_id)
-        except Exception as exc:
-            # Continue with deletion cleanup even if stop path fails.
-            cleanup_errors.append(f"stop_failed:{exc}")
-            self._runners.pop(resolved_agent_id, None)
-        self._runners.pop(resolved_agent_id, None)
-
-        try:
-            self.session_service.delete_sessions_for_agent(resolved_agent_id)
-        except Exception as exc:
-            cleanup_errors.append(f"session_cleanup_failed:{exc}")
-
-        try:
-            deleted = self.agent_service.delete_agent(resolved_agent_id)
-        except Exception as exc:
-            cleanup_errors.append(f"agent_delete_failed:{exc}")
-
-        if self.audit_service:
             try:
-                if cleanup_errors:
-                    self.audit_service.log(
-                        "agent.delete.error",
-                        target=resolved_agent_id,
-                        details={"errors": cleanup_errors, "deleted": deleted},
-                        actor="supervisor",
-                    )
-                elif deleted:
-                    self.audit_service.log("agent.delete", target=resolved_agent_id, details={}, actor="supervisor")
+                agent = self.agent_service.get_agent(agent_id)
+                resolved_agent_id = agent.id if agent else agent_id
             except Exception as exc:
-                cleanup_errors.append(f"audit_failed:{exc}")
+                cleanup_errors.append(f"agent_lookup_failed:{exc}")
+
+            try:
+                await self.stop_agent(resolved_agent_id)
+            except Exception as exc:
+                # Continue with deletion cleanup even if stop path fails.
+                cleanup_errors.append(f"stop_failed:{exc}")
+                self._runners.pop(resolved_agent_id, None)
+            self._runners.pop(resolved_agent_id, None)
+
+            try:
+                self.session_service.delete_sessions_for_agent(resolved_agent_id)
+            except Exception as exc:
+                cleanup_errors.append(f"session_cleanup_failed:{exc}")
+
+            try:
+                deleted = self.agent_service.delete_agent(resolved_agent_id)
+            except Exception as exc:
+                cleanup_errors.append(f"agent_delete_failed:{exc}")
+
+            if self.audit_service:
+                try:
+                    if cleanup_errors:
+                        self.audit_service.log(
+                            "agent.delete.error",
+                            target=resolved_agent_id,
+                            details={"errors": cleanup_errors, "deleted": deleted},
+                            actor="supervisor",
+                        )
+                    elif deleted:
+                        self.audit_service.log("agent.delete", target=resolved_agent_id, details={}, actor="supervisor")
+                except Exception as exc:
+                    cleanup_errors.append(f"audit_failed:{exc}")
+        except Exception as exc:
+            cleanup_errors.append(f"delete_unhandled:{exc}")
+            deleted = False
 
         if cleanup_errors:
             self._last_errors[resolved_agent_id] = " | ".join(cleanup_errors)
@@ -171,6 +174,9 @@ class RuntimeSupervisor:
             self._last_errors.pop(resolved_agent_id, None)
 
         return deleted
+
+    def get_last_error(self, agent_id: str) -> Optional[str]:
+        return self._last_errors.get(agent_id)
 
     async def restart_all(self) -> SupervisorSnapshot:
         for agent_id in list(self._runners.keys()):

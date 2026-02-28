@@ -83,6 +83,11 @@ class AgentsScreen(BaseControlScreen):
         if action_id == "agents-create":
             self.jump(Route.HATCH)
             return
+        selected_row = 0
+        try:
+            selected_row = max(0, int(self.table.cursor_row))
+        except Exception:
+            selected_row = 0
         agent = self._selected_agent()
         if not agent:
             raise ValidationError("Select an agent first.")
@@ -99,8 +104,17 @@ class AgentsScreen(BaseControlScreen):
             self.context.agent_service.set_default_agent(agent.id)
             self.context.audit_service.log("agent.set_default", target=agent.id, details={}, actor="tui")
         elif action_id == "agents-delete":
-            await self.context.runtime_supervisor.delete_agent(agent.id)
-        await self.refresh_data()
+            deleted = await self.context.runtime_supervisor.delete_agent(agent.id)
+            cleanup_error = self.context.runtime_supervisor.get_last_error(agent.id)
+            await self._safe_refresh(selected_row=selected_row)
+            if cleanup_error:
+                self.hint.update(sanitize_terminal_text(f"Delete completed with warnings: {cleanup_error[:180]}"))
+            elif deleted:
+                self.hint.update(sanitize_terminal_text(f"Deleted agent: {agent.name}"))
+            else:
+                self.hint.update(sanitize_terminal_text(f"Delete skipped; agent not found: {agent.name}"))
+            return
+        await self._safe_refresh(selected_row=selected_row)
 
     async def _save_edit(self) -> None:
         agent = self._selected_agent()
@@ -125,6 +139,25 @@ class AgentsScreen(BaseControlScreen):
 
     async def save_current(self) -> None:
         await self._save_edit()
+
+    async def _safe_refresh(self, selected_row: int = 0) -> None:
+        try:
+            await self.refresh_data()
+        except Exception as exc:
+            # Keep the screen usable even if a refresh edge case occurs.
+            self._row_agent_ids = []
+            self.show_error(exc)
+            return
+        if self.table.row_count <= 0:
+            return
+        target_row = min(max(selected_row, 0), self.table.row_count - 1)
+        try:
+            self.table.move_cursor(row=target_row, column=0)
+        except Exception:
+            try:
+                self.table.cursor_coordinate = (target_row, 0)
+            except Exception:
+                pass
 
     def _selected_agent(self):
         if self.table.row_count <= 0:

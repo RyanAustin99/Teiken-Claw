@@ -97,12 +97,14 @@ class ChatScreen(BaseControlScreen):
             self.state_line.update("[WARN] Action failed.")
 
     async def refresh_data(self) -> None:
+        self._ensure_active_context()
         if self.active_agent_id and self.active_session_id:
             self.state_line.update(f"Agent: {self.active_agent_id} | Session: {self.active_session_id}")
         else:
             self.state_line.update("No active session")
 
     async def _handle_input(self, text: str) -> None:
+        self._ensure_active_context()
         if self._pending_task and not self._pending_task.done():
             self._append_transcript("assistant> Still working on the previous message. Please wait.")
             return
@@ -134,6 +136,7 @@ class ChatScreen(BaseControlScreen):
         self._pending_task = asyncio.create_task(_run_message())
 
     async def _handle_command(self, command: str) -> None:
+        self._ensure_active_context()
         if command in {"/exit", "/quit"}:
             self.jump(Route.DASHBOARD)
             return
@@ -236,6 +239,10 @@ class ChatScreen(BaseControlScreen):
     def _load_transcript(self) -> None:
         if not self.active_session_id:
             return
+        if not self.context.session_service.get_session(self.active_session_id):
+            self._append_transcript("system> Active session no longer exists. Start or resume a session.")
+            self.active_session_id = None
+            return
         self.transcript.clear()
         for item in self.context.session_service.get_transcript(self.active_session_id):
             if item.tool_name:
@@ -316,3 +323,13 @@ class ChatScreen(BaseControlScreen):
         if optional:
             return None
         raise ValidationError(f"Unknown agent: {ref}")
+
+    def _ensure_active_context(self) -> None:
+        if self.active_agent_id and not self.context.agent_service.get_agent(self.active_agent_id):
+            self.active_agent_id = None
+            self.active_session_id = None
+            self._append_transcript("system> Active agent was deleted. Select another agent to continue.")
+            return
+        if self.active_session_id and not self.context.session_service.get_session(self.active_session_id):
+            self.active_session_id = None
+            self._append_transcript("system> Active session was removed. Start or resume a session.")

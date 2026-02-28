@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Static
@@ -93,6 +91,6 @@ class StatusScreen(BaseControlScreen):
                     ]
                 )
             )
-            self.updated.update(f"Last updated: {datetime.now().strftime('%H:%M:%S')}")
+            self.updated.update(f"Last updated: {self.format_time()}")
         except Exception as exc:
             self.show_error(exc)

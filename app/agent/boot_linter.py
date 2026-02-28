@@ -17,6 +17,14 @@ def lint_boot_message(text: str, settings: Any) -> List[str]:
         if phrase and phrase.lower() in lowered:
             problems.append(f"contains forbidden phrase: {phrase}")
 
+    canned_phrases = getattr(settings, "TC_BOOT_CANNED_PHRASES", []) or []
+    for phrase in canned_phrases:
+        if phrase and phrase.lower() in lowered:
+            problems.append(f"contains canned assistant phrasing: {phrase}")
+            break
+    if re.search(r"\bhello\b.{0,40}\bi am (your )?(agent|assistant)\b", lowered):
+        problems.append("contains canned assistant intro")
+
     markers = getattr(settings, "TC_BOOT_LIST_MARKERS", []) or []
     lines = normalized.splitlines()
     for line in lines:
@@ -41,4 +49,3 @@ def lint_boot_message(text: str, settings: Any) -> List[str]:
         problems.append(f"too many words: {words}")
 
     return problems
-

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Static
@@ -72,7 +70,7 @@ class DashboardScreen(BaseControlScreen):
                         format_health("Ollama", ollama_state, f"{cfg.ollama_endpoint} ({endpoint.get('latency_ms', '-') } ms)"),
                         format_health("Default model", model_state, cfg.default_model),
                         format_health("Storage", storage_state, str(self.context.paths.control_plane_db)),
-                        f"Last updated: {datetime.now().strftime('%H:%M:%S')}",
+                        f"Last updated: {self.format_time()}",
                     ]
                 )
             )

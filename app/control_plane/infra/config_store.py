@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 
-CURRENT_CONFIG_VERSION = 3
+CURRENT_CONFIG_VERSION = 4
 
 
 class ConfigStore:
@@ -57,5 +57,8 @@ class ConfigStore:
             migrated.setdefault("max_tool_turns_per_request", 8)
             migrated.setdefault("tool_call_timeout_sec", 30)
             migrated["config_version"] = 3
+        if version < 4:
+            migrated.setdefault("clock_24h", False)
+            migrated["config_version"] = 4
         return migrated
 
