@@ -5,6 +5,7 @@ This module provides configuration via environment variables with defaults.
 Settings are loaded from .env file and can be overridden by environment variables.
 """
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 from typing import Optional, List
 from functools import lru_cache
@@ -219,6 +220,27 @@ class Settings(BaseSettings):
     # =========================================================================
     
     REDIS_URL: Optional[str] = None
+
+    @field_validator("DEBUG", mode="before")
+    @classmethod
+    def _coerce_debug_bool(cls, value):
+        """
+        Accept common non-boolean env values for DEBUG.
+
+        Some environments set DEBUG to values like "release" or "prod".
+        Normalize these safely instead of failing settings initialization.
+        """
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            truthy = {"1", "true", "yes", "y", "on", "debug", "dev", "development", "test", "testing"}
+            falsy = {"0", "false", "no", "n", "off", "release", "prod", "production"}
+            if normalized in truthy:
+                return True
+            if normalized in falsy:
+                return False
+        return value
     
     class Config:
         env_file = ".env"
