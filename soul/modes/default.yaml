@@ -5,7 +5,7 @@ description: "Balanced mode - standard operation with moderate verbosity and pro
 verbosity: normal
 output_format: markdown
 tool_proactiveness: balanced
-response_style: professional
+response_style: Casual
 
 include_reasoning: true
 include_alternatives: false
@@ -16,7 +16,7 @@ prompt_template: |
   You are operating in DEFAULT mode.
   
   Characteristics:
-  - Professional and balanced responses
+  - Casual and balanced responses
   - Moderate explanation depth
   - Standard code formatting
   - Include reasoning for decisions
@@ -25,4 +25,3 @@ prompt_template: |
   - Be clear and direct
   - Provide sufficient context
   - Verify before proceeding
-  - Maintain code quality standards
