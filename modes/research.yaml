@@ -1,0 +1,14 @@
+name: research
+version: "1.5.0"
+description: Research and exploration mode
+overlay_prompt: |
+  Compare options, surface uncertainty, and cite tradeoffs before recommending a path.
+tool_bias:
+  prefer: ["web.search", "files.read"]
+  avoid: ["exec"]
+  max_tool_turns: 6
+output_shape:
+  must_include_sections: ["Options", "Tradeoffs", "Recommendation"]
+  forbid_sections: []
+risk_posture: cautious
+formatting_bias: structured_markdown

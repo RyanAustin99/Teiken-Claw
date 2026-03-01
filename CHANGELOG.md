@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.22.0] - 2026-03-01
+
+### Added
+
+- Phase 22 Souls + Modes deterministic contract:
+  - Versioned souls/ and modes/ registries with schema validation + hashes
+  - Thread/session persisted ctive_mode, ctive_soul, and mode lock controls
+  - Persona resolver with legacy mode aliases and effective tool/file policy derivation
+  - Deterministic prompt assembly with prompt fingerprinting
+  - Telegram /soul command surface and expanded /mode controls (list/show/set/lock/unlock)
+  - Persona audit persistence for soul/mode changes
+
+### Changed
+
+- Runtime now resolves soul/mode deterministically per request and enforces effective tool/file policy at execution time.
+- Telegram status now reports active soul/mode scope and effective file policy summary.
+- Control-plane agent/session models include explicit default and active soul/mode state for deterministic behavior.
+
+## [1.21.0] - 2026-02-28
+
+### Added
+
+- Phase 21 Memory v1.5 persistence and APIs:
+  - `memory_items` and `memory_audit_events` schema/models
+  - Thread public refs (`t_...`) and memory refs (`m_...`)
+  - Deterministic extraction orchestration with secret/category blocking
+  - Thread-scoped memory stores (`ThreadStore`, `MessageStore`, `MemoryStoreV15`)
+
+### Changed
+
+- Telegram `/thread` commands now use persistent thread records:
+  - `/thread new`, `/thread list`, `/thread use`, `/thread` info
+- Telegram `/memory` commands now target active thread memory cards:
+  - `/memory review`, `/memory search`, `/memory forget`, `/memory pause`, `/memory resume`, `/memory stats`
+- Agent runtime memory pipeline is deterministic-first and no longer creates memory from LLM extraction output.
+- Context builder now injects deterministic thread header + relevant memory cards + recent transcript window.
+
 ## [1.0.1] - Unreleased
 
 ### Fixed
@@ -814,3 +851,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Phase 3: Core Agent Implementation (planned)
 - Phase 4: Interface Layer (planned)
 - Phase 5: Testing & Documentation (planned)
+

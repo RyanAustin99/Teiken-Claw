@@ -139,7 +139,12 @@ def get_sync_session_factory() -> sessionmaker[Session]:
         if db_url.startswith("sqlite+aiosqlite://"):
             db_url = db_url.replace("sqlite+aiosqlite://", "sqlite://", 1)
 
-        engine = create_engine(db_url, future=True)
+        engine_kwargs = {"future": True}
+        if db_url.startswith("sqlite://") and ":memory:" not in db_url:
+            # Test and bot command paths create many short-lived sync sessions.
+            # Increase pool headroom to avoid QueuePool exhaustion under load.
+            engine_kwargs.update({"pool_size": 50, "max_overflow": 100, "pool_timeout": 30})
+        engine = create_engine(db_url, **engine_kwargs)
         _sync_session_factory = sessionmaker(
             bind=engine,
             class_=Session,

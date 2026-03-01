@@ -109,6 +109,8 @@ class AgentRecord(BaseModel):
     profile_json: Optional[Dict[str, Any]] = None
     boot_directives: Optional[str] = None
     degraded_reason: Optional[str] = None
+    default_soul: str = "teiken_claw_agent@1.5.0"
+    default_mode: str = "builder@1.5.0"
 
 
 class SessionRecord(BaseModel):
@@ -119,6 +121,9 @@ class SessionRecord(BaseModel):
     title: Optional[str] = None
     onboarding_status: OnboardingStatus = OnboardingStatus.PENDING
     onboarding_step: int = 0
+    active_soul: Optional[str] = None
+    active_mode: str = "builder@1.5.0"
+    mode_locked: bool = False
 
 
 class SessionMessageRecord(BaseModel):

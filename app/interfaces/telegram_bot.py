@@ -124,6 +124,9 @@ class TelegramBot:
             CommandHandler("mode", self._handle_mode)
         )
         self._application.add_handler(
+            CommandHandler("soul", self._handle_soul)
+        )
+        self._application.add_handler(
             CommandHandler("thread", self._handle_thread)
         )
         self._application.add_handler(
@@ -326,6 +329,11 @@ class TelegramBot:
                 "message_id": message_id,
                 "source": "telegram",
             }
+            if self.command_router and hasattr(self.command_router, "get_chat_persona_payload"):
+                try:
+                    payload.update(self.command_router.get_chat_persona_payload(chat_id))
+                except Exception:
+                    pass
             
             # Create the job
             job = create_job(
@@ -594,6 +602,25 @@ class TelegramBot:
             parse_mode="Markdown"
         )
 
+    async def _handle_soul(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /soul command."""
+        if not update.effective_message:
+            return
+
+        chat_id = update.effective_chat.id
+        user_id = update.effective_user.id if update.effective_user else 0
+        args = context.args if context.args else []
+
+        if self.command_router and hasattr(self.command_router, "handle_soul"):
+            response = await self.command_router.handle_soul(chat_id, user_id, args)
+        else:
+            response = "Soul commands not available."
+
+        await update.effective_message.reply_text(
+            response,
+            parse_mode="Markdown"
+        )
+
     async def _handle_hatch(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /hatch command."""
         if not update.effective_message:
@@ -747,7 +774,15 @@ class TelegramBot:
 
 *Mode Commands:*
 /mode - Show current mode
-/mode <name> - Switch mode (default, architect, operator, coder, researcher)
+/mode list - List modes
+/mode <name> - Switch mode (architect, builder, debugger, research, minimal)
+/mode lock - Lock mode
+/mode unlock - Unlock mode
+
+*Soul Commands:*
+/soul list - List souls
+/soul show <name> - Show soul details
+/soul use <name> - Set active soul
 
 *Thread Commands:*
 /thread - Show current thread info

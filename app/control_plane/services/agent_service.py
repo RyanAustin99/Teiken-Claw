@@ -32,6 +32,8 @@ class AgentService:
         tool_profile_version: Optional[str] = None,
         prompt_template_version: str = "1.0.0",
         allow_dangerous_override: bool = False,
+        default_soul: str = "teiken_claw_agent@1.5.0",
+        default_mode: str = "builder@1.5.0",
     ) -> AgentRecord:
         if not name.strip():
             raise ValidationError("Agent name is required")
@@ -57,6 +59,8 @@ class AgentService:
             max_queue_depth=max_queue_depth,
             tool_profile_version=tool_profile_version,
             prompt_template_version=prompt_template_version,
+            default_soul=default_soul,
+            default_mode=default_mode,
         )
 
     def list_agents(self) -> List[AgentRecord]:

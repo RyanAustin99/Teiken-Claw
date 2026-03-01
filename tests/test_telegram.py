@@ -209,20 +209,55 @@ class TestCommandRouter:
         """Test /mode command shows current mode."""
         response = await router.handle_mode(12345, 111, [])
         assert "Current Mode" in response
-        assert "default" in response
+        assert "@1.5.0" in response
     
     @pytest.mark.asyncio
     async def test_handle_mode_switch(self, router):
         """Test /mode command switches mode."""
         response = await router.handle_mode(12345, 111, ["architect"])
         assert "architect" in response.lower()
-        assert router.get_current_mode(12345) == "architect"
+        assert router.get_current_mode(12345) == "architect@1.5.0"
     
     @pytest.mark.asyncio
     async def test_handle_mode_invalid(self, router):
         """Test /mode command with invalid mode."""
         response = await router.handle_mode(12345, 111, ["invalid"])
-        assert "Invalid" in response
+        assert "Unknown mode" in response
+
+    @pytest.mark.asyncio
+    async def test_handle_mode_lock_and_unlock(self, router):
+        """Test /mode lock and /mode unlock behavior."""
+        await router.handle_thread(12345, 111, ["new", "Lock test"])
+
+        lock_response = await router.handle_mode(12345, 111, ["lock"])
+        assert "locked" in lock_response.lower()
+
+        blocked_switch = await router.handle_mode(12345, 111, ["architect"])
+        assert "ERR_MODE_LOCKED" in blocked_switch
+
+        unlock_response = await router.handle_mode(12345, 111, ["unlock"])
+        assert "unlocked" in unlock_response.lower()
+
+        switched = await router.handle_mode(12345, 111, ["architect"])
+        assert "architect@1.5.0" in switched
+
+    @pytest.mark.asyncio
+    async def test_handle_soul_list_show_use(self, router):
+        """Test /soul list/show/use command surface."""
+        await router.handle_thread(12345, 111, ["new", "Soul test"])
+
+        listing = await router.handle_soul(12345, 111, ["list"])
+        assert "Souls" in listing
+        assert "teiken_claw_agent@1.5.0" in listing
+
+        show = await router.handle_soul(12345, 111, ["show", "teiken_claw_agent"])
+        assert "Soul:" in show
+        assert "teiken_claw_agent@1.5.0" in show
+
+        use = await router.handle_soul(12345, 111, ["use", "teiken_claw_agent"])
+        assert "Soul changed" in use
+        payload = router.get_chat_persona_payload(12345)
+        assert payload["soul_ref"] == "teiken_claw_agent@1.5.0"
     
     @pytest.mark.asyncio
     async def test_handle_thread_new(self, router):
@@ -238,12 +273,35 @@ class TestCommandRouter:
         # Then get info
         response = await router.handle_thread(12345, 111, [])
         assert "Thread Info" in response
+
+    @pytest.mark.asyncio
+    async def test_handle_thread_list_and_use(self, router):
+        """Test /thread list and /thread use commands."""
+        first = await router.handle_thread(12345, 111, ["new", "Alpha"])
+        second = await router.handle_thread(12345, 111, ["new", "Beta"])
+        assert "New thread" in first
+        assert "New thread" in second
+
+        listing = await router.handle_thread(12345, 111, ["list"])
+        assert "Threads" in listing
+        refs = [token.strip("`") for token in listing.split() if token.startswith("`t_")]
+        assert refs
+
+        use_resp = await router.handle_thread(12345, 111, ["use", refs[0]])
+        assert "Active thread" in use_resp
     
     @pytest.mark.asyncio
     async def test_handle_memory_stub(self, router):
         """Test /memory review command."""
         response = await router.handle_memory(12345, 111, ["review"])
         assert "recent memories" in response.lower()
+
+    @pytest.mark.asyncio
+    async def test_handle_memory_stats(self, router):
+        """Test /memory stats command."""
+        await router.handle_thread(12345, 111, ["new", "Memory Stats"])
+        response = await router.handle_memory(12345, 111, ["stats"])
+        assert "memory stats" in response.lower()
     
     @pytest.mark.asyncio
     async def test_handle_jobs_stub(self, router):
@@ -526,12 +584,12 @@ class TestTelegramIntegration:
         # Change mode
         await router.handle_mode(12345, 111, ["coder"])
         
-        # Verify mode persisted
-        assert router.get_current_mode(12345) == "coder"
+        # Verify mode alias resolves to canonical ref and persists
+        assert router.get_current_mode(12345) == "builder@1.5.0"
         
         # Change again
         await router.handle_mode(12345, 111, ["researcher"])
-        assert router.get_current_mode(12345) == "researcher"
+        assert router.get_current_mode(12345) == "research@1.5.0"
     
     def test_markdown_v2_escaping_integration(self):
         """Test MarkdownV2 escaping with realistic content."""

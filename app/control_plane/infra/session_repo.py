@@ -39,6 +39,9 @@ class SessionRepository:
                     title TEXT,
                     onboarding_status TEXT NOT NULL DEFAULT 'pending',
                     onboarding_step INTEGER NOT NULL DEFAULT 0,
+                    active_soul TEXT,
+                    active_mode TEXT NOT NULL DEFAULT 'builder@1.5.0',
+                    mode_locked INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
@@ -67,6 +70,9 @@ class SessionRepository:
         required = {
             "onboarding_status": "TEXT NOT NULL DEFAULT 'pending'",
             "onboarding_step": "INTEGER NOT NULL DEFAULT 0",
+            "active_soul": "TEXT",
+            "active_mode": "TEXT NOT NULL DEFAULT 'builder@1.5.0'",
+            "mode_locked": "INTEGER NOT NULL DEFAULT 0",
         }
         for column, definition in required.items():
             if column in existing:
@@ -83,6 +89,9 @@ class SessionRepository:
             title=row["title"],
             onboarding_status=OnboardingStatus(row["onboarding_status"]),
             onboarding_step=int(row["onboarding_step"] or 0),
+            active_soul=row["active_soul"] if "active_soul" in row.keys() else None,
+            active_mode=row["active_mode"] if "active_mode" in row.keys() and row["active_mode"] else "builder@1.5.0",
+            mode_locked=bool(row["mode_locked"]) if "mode_locked" in row.keys() else False,
         )
 
     @staticmethod
@@ -105,14 +114,17 @@ class SessionRepository:
             conn.execute(
                 """
                 INSERT INTO agent_sessions (
-                    id, agent_id, title, onboarding_status, onboarding_step, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    id, agent_id, title, onboarding_status, onboarding_step, active_soul, active_mode, mode_locked, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
                     agent_id,
                     title,
                     OnboardingStatus.PENDING.value,
+                    0,
+                    None,
+                    "builder@1.5.0",
                     0,
                     now,
                     now,
@@ -160,6 +172,40 @@ class SessionRepository:
                 WHERE id = ?
                 """,
                 (status.value, step, now, session_id),
+            )
+            conn.commit()
+            row = conn.execute("SELECT * FROM agent_sessions WHERE id = ?", (session_id,)).fetchone()
+        if not row:
+            return None
+        return self._row_to_session(row)
+
+    def set_persona(self, session_id: str, *, active_soul: Optional[str], active_mode: Optional[str]) -> Optional[SessionRecord]:
+        now = _utcnow()
+        with closing(self._connect()) as conn:
+            conn.execute(
+                """
+                UPDATE agent_sessions
+                SET active_soul = ?, active_mode = COALESCE(?, active_mode), updated_at = ?
+                WHERE id = ?
+                """,
+                (active_soul, active_mode, now, session_id),
+            )
+            conn.commit()
+            row = conn.execute("SELECT * FROM agent_sessions WHERE id = ?", (session_id,)).fetchone()
+        if not row:
+            return None
+        return self._row_to_session(row)
+
+    def set_mode_locked(self, session_id: str, *, locked: bool) -> Optional[SessionRecord]:
+        now = _utcnow()
+        with closing(self._connect()) as conn:
+            conn.execute(
+                """
+                UPDATE agent_sessions
+                SET mode_locked = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (1 if locked else 0, now, session_id),
             )
             conn.commit()
             row = conn.execute("SELECT * FROM agent_sessions WHERE id = ?", (session_id,)).fetchone()

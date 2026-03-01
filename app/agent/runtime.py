@@ -20,7 +20,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
@@ -43,10 +43,10 @@ from app.tools.executor import ToolExecutionContext, ToolExecutor
 from app.tools.loop import run_tool_loop
 from app.tools.registry import ToolRegistry, get_tool_registry
 
-# Memory system imports
-from app.memory.store import get_memory_store
 from app.memory.thread_state import get_thread_state
-from app.memory.extraction_rules import get_extraction_rules
+from app.memory.message_store import MessageStore
+from app.memory.extractor import get_memory_extractor
+from app.persona.resolve import PersonaResolutionError, ResolvedPersona, resolve_persona
 
 logger = get_logger(__name__)
 
@@ -160,6 +160,8 @@ class AgentRuntime:
 
             register_production_tools(self.tool_registry)
         self.tool_executor = ToolExecutor(self.tool_registry)
+        self._message_store = MessageStore()
+        self._memory_extractor = get_memory_extractor()
         
         logger.info(
             f"AgentRuntime initialized: max_tool_turns={max_tool_turns}",
@@ -196,11 +198,21 @@ class AgentRuntime:
         if skill_result:
             return skill_result
         
-        # Persist user message to memory
-        await self._persist_user_message(job)
+        # Persist user message and resolve active thread.
+        persisted_user = await self._persist_user_message(job)
+        if settings.AUTO_MEMORY_ENABLED and persisted_user:
+            await self._trigger_memory_extraction(
+                thread_pk=persisted_user["thread_pk"],
+                thread_id=persisted_user["thread_id"],
+                user_message=persisted_user["user_message"],
+                source_message_id=persisted_user["source_message_id"],
+                memory_enabled=persisted_user["memory_enabled"],
+                agent_id=str((job.payload or {}).get("agent_id")) if (job.payload or {}).get("agent_id") is not None else None,
+            )
 
-        messages = await self._build_initial_context(job)
-        tools = self._get_tools_for_context(job)
+        persona = self._resolve_job_persona(job)
+        messages = await self._build_initial_context(job, persona=persona)
+        tools = self._get_tools_for_context(job, persona=persona)
         workspace_hint = (job.payload or {}).get("workspace_root") or (job.payload or {}).get("workspace_path")
         workspace_root = None
         if workspace_hint:
@@ -211,6 +223,7 @@ class AgentRuntime:
         execution_context = ToolExecutionContext(
             agent_id=job.payload.get("agent_id"),
             session_id=job.session_id,
+            thread_id=job.thread_id or (job.payload or {}).get("thread_id"),
             scheduler_job_id=(job.payload or {}).get("scheduler_job_id") or (job.payload or {}).get("job_id"),
             scheduler_run_id=(job.payload or {}).get("scheduler_run_id") or (job.payload or {}).get("run_id"),
             chat_id=job.chat_id,
@@ -221,6 +234,8 @@ class AgentRuntime:
             correlation_id=f"job-{job.job_id}",
             max_calls_per_message=3,
             timeout_sec=30.0,
+            allowed_tools=set(persona.effective_allowed_tools) if persona.effective_allowed_tools is not None else None,
+            file_policy_override=persona.effective_file_policy,
             audit_log=self._audit_tool_event,
         )
 
@@ -235,7 +250,7 @@ class AgentRuntime:
                 model_call=_model_call,
                 executor=self.tool_executor,
                 execution_context=execution_context,
-                max_tool_turns_per_request=self.max_tool_turns,
+                max_tool_turns_per_request=min(self.max_tool_turns, persona.max_tool_turns) if persona.max_tool_turns else self.max_tool_turns,
             )
         except CircuitBreakerOpenError as e:
             logger.error(
@@ -302,18 +317,6 @@ class AgentRuntime:
             tool_calls=tool_call_count,
         )
 
-        user_message = job.payload.get("text", "") or job.payload.get("message", "")
-        session_id = job.session_id or f"chat:{job.chat_id}"
-        thread_id = job.thread_id or await self._get_thread_id(job)
-
-        if settings.AUTO_MEMORY_ENABLED and thread_id:
-            await self._trigger_memory_extraction(
-                session_id=session_id,
-                thread_id=thread_id,
-                user_message=user_message,
-                assistant_message=final_content,
-            )
-
         logger.info(
             f"Agent run completed: {job.job_id}",
             extra={
@@ -371,7 +374,7 @@ class AgentRuntime:
                 metadata={"event_subtype": subtype},
             )
     
-    async def _build_initial_context(self, job: Job) -> List[Dict[str, Any]]:
+    async def _build_initial_context(self, job: Job, *, persona: Optional[ResolvedPersona] = None) -> List[Dict[str, Any]]:
         """
         Build the initial message context for a job.
         
@@ -386,9 +389,13 @@ class AgentRuntime:
         
         # Get mode from job
         mode = job.payload.get("mode", "default")
+        if persona is not None:
+            mode = persona.resolved_mode_ref
         
         # Get soul config from job payload or global loader
         soul_config = job.payload.get("soul_config")
+        if persona is not None:
+            soul_config = {"ref": persona.resolved_soul_ref}
         if soul_config is None:
             # Try to get from global soul loader
             try:
@@ -414,11 +421,24 @@ class AgentRuntime:
             thread_id=job.thread_id,
             mode=mode,
             soul_config=soul_config,
+            tool_profile=str(job.payload.get("tool_profile", "balanced")),
         )
+        bundle = getattr(self.context_builder, "last_prompt_bundle", None)
+        if bundle is not None:
+            logger.info(
+                "Prompt assembled",
+                extra={
+                    "event": "prompt_assembled",
+                    "thread_id": job.thread_id,
+                    "mode": bundle.resolved_mode_ref,
+                    "soul": bundle.resolved_soul_ref,
+                    "prompt_fingerprint": bundle.prompt_fingerprint,
+                },
+            )
         
         return messages
     
-    def _get_tools_for_context(self, job: Job) -> List[Dict[str, Any]]:
+    def _get_tools_for_context(self, job: Job, *, persona: Optional[ResolvedPersona] = None) -> List[Dict[str, Any]]:
         """
         Get available tools for the job context.
         
@@ -432,10 +452,15 @@ class AgentRuntime:
         is_admin = job.payload.get("is_admin", False)
         mode = job.payload.get("mode", "default")
         
+        tool_allowlist = None
+        if persona is not None and persona.effective_allowed_tools is not None:
+            tool_allowlist = set(persona.effective_allowed_tools)
+
         return self.tool_registry.get_allowed_schemas(
             mode=mode,
             chat_id=chat_id,
             is_admin=is_admin,
+            tool_allowlist=tool_allowlist,
         )
     
     def _build_tool_context(self, job: Job) -> Dict[str, Any]:
@@ -760,58 +785,62 @@ class AgentRuntime:
                 tool_calls=0,
             )
 
-    async def _persist_user_message(self, job: Job) -> None:
+    async def _persist_user_message(self, job: Job) -> Optional[Dict[str, Any]]:
         """
-        Persist user message to memory store.
+        Persist user message to thread transcript and resolve active thread.
         
         Args:
             job: Job containing the user message
         """
         try:
-            memory_store = get_memory_store()
             thread_state = get_thread_state()
-            
-            # Get or create session/thread
-            session_id = job.session_id or f"chat:{job.chat_id}"
-            thread_id = job.thread_id
-            
-            if not thread_id:
-                # Get current thread for session
-                thread_id = thread_state.get_current_thread(session_id)
-            
-            if not thread_id:
-                # Create new thread
-                thread_id = thread_state.create_new_thread(
-                    session_id=session_id,
-                    metadata={"source": job.source, "chat_id": job.chat_id}
-                )
-            
-            # Get user message
-            user_message = job.payload.get("text", "") or job.payload.get("message", "")
-            
-            # Append message to thread
-            memory_store.append_message(
-                thread_id=thread_id,
+            chat_scope = job.chat_id or job.session_id or "default"
+            explicit_thread = job.thread_id or (job.payload or {}).get("thread_id")
+            thread = thread_state.resolve_thread(chat_scope, explicit_thread_id=explicit_thread)
+
+            user_message = (job.payload or {}).get("text", "") or (job.payload or {}).get("message", "")
+            if not user_message:
+                return None
+
+            message = self._message_store.append_message(
+                thread_id=thread.id,
                 role="user",
                 content=user_message,
-                metadata={"job_id": job.job_id, "source": job.source}
+                metadata={"job_id": job.job_id, "source": job.source},
             )
-            
+
+            job.thread_id = thread.public_id
+            if isinstance(job.payload, dict):
+                job.payload["thread_id"] = thread.public_id
+                job.payload["mode"] = str(thread.active_mode or getattr(settings, "DEFAULT_MODE_REF", "builder@1.5.0"))
+                if thread.active_soul:
+                    job.payload["soul_ref"] = str(thread.active_soul)
+
             logger.debug(
                 f"Persisted user message for job: {job.job_id}",
                 extra={
                     "event": "user_message_persisted",
                     "job_id": job.job_id,
-                    "session_id": session_id,
-                    "thread_id": thread_id,
+                    "thread_id": thread.public_id,
                 }
             )
+            return {
+                "thread_id": thread.public_id,
+                "thread_pk": thread.id,
+                "memory_enabled": bool(thread.memory_enabled),
+                "active_mode": str(thread.active_mode or getattr(settings, "DEFAULT_MODE_REF", "builder@1.5.0")),
+                "active_soul": thread.active_soul or getattr(settings, "DEFAULT_SOUL_REF", "teiken_claw_agent@1.5.0"),
+                "mode_locked": bool(getattr(thread, "mode_locked", False)),
+                "source_message_id": message.id,
+                "user_message": user_message,
+            }
         except Exception as e:
             # Don't fail the job if persistence fails
             logger.warning(
                 f"Failed to persist user message: {e}",
                 extra={"event": "user_message_persist_failed", "job_id": job.job_id}
             )
+            return None
     
     async def _persist_assistant_message(
         self,
@@ -828,31 +857,35 @@ class AgentRuntime:
             tool_calls: Number of tool calls made
         """
         try:
-            memory_store = get_memory_store()
             thread_state = get_thread_state()
-            
-            session_id = job.session_id or f"chat:{job.chat_id}"
-            thread_id = job.thread_id or thread_state.get_current_thread(session_id)
-            
-            if thread_id:
-                memory_store.append_message(
-                    thread_id=thread_id,
-                    role="assistant",
-                    content=response,
-                    metadata={
-                        "job_id": job.job_id,
-                        "tool_calls": tool_calls,
-                    }
-                )
-                
-                logger.debug(
-                    f"Persisted assistant message for job: {job.job_id}",
-                    extra={
-                        "event": "assistant_message_persisted",
-                        "job_id": job.job_id,
-                        "thread_id": thread_id,
-                    }
-                )
+
+            chat_scope = job.chat_id or job.session_id or "default"
+            thread_ref = job.thread_id or thread_state.get_current_thread(chat_scope)
+            if not thread_ref:
+                return
+            thread_context = thread_state.get_thread_context(thread_ref, max_messages=1)
+            thread_pk = thread_context.get("thread_pk")
+            if thread_pk is None:
+                return
+
+            self._message_store.append_message(
+                thread_id=int(thread_pk),
+                role="assistant",
+                content=response,
+                metadata={
+                    "job_id": job.job_id,
+                    "tool_calls": tool_calls,
+                },
+            )
+
+            logger.debug(
+                f"Persisted assistant message for job: {job.job_id}",
+                extra={
+                    "event": "assistant_message_persisted",
+                    "job_id": job.job_id,
+                    "thread_id": thread_ref,
+                },
+            )
         except Exception as e:
             logger.warning(
                 f"Failed to persist assistant message: {e}",
@@ -871,184 +904,96 @@ class AgentRuntime:
         """
         try:
             thread_state = get_thread_state()
-            session_id = job.session_id or f"chat:{job.chat_id}"
+            chat_scope = job.chat_id or job.session_id or "default"
             
             if job.thread_id:
                 return job.thread_id
             
-            return thread_state.get_current_thread(session_id)
+            return thread_state.get_current_thread(chat_scope)
         except Exception:
             return None
     
     async def _trigger_memory_extraction(
         self,
-        session_id: str,
+        thread_pk: int,
         thread_id: str,
         user_message: str,
-        assistant_message: str
+        source_message_id: int,
+        memory_enabled: bool,
+        agent_id: Optional[str] = None,
     ) -> None:
         """
-        Trigger memory extraction pipeline for conversation.
-        
-        Uses both deterministic rules and LLM-based extraction,
-        with deduplication before storing.
+        Trigger deterministic Memory v1.5 extraction for one user message.
         
         Args:
-            session_id: Session ID
-            thread_id: Thread ID
-            user_message: User's message
-            assistant_message: Assistant's response
+            thread_pk: Internal thread primary key
+            thread_id: Public thread reference
+            user_message: User message content
+            source_message_id: Persisted transcript message ID
+            memory_enabled: Whether memory extraction is enabled for thread
+            agent_id: Optional agent identifier for audit
         """
         try:
-            extraction_rules = get_extraction_rules()
-            memory_store = get_memory_store()
-            
-            # Combine conversation for analysis
-            conversation = f"User: {user_message}\nAssistant: {assistant_message}"
-            
-            # Extract candidates using deterministic rules
-            candidates = extraction_rules.extract_facts(conversation)
-            
-            # Classify and filter candidates
-            classified = extraction_rules.classify_candidates(candidates)
-            
-            # Also try LLM-based extraction
-            llm_candidates = await self._llm_memory_extraction(
-                conversation=conversation,
-                session_id=session_id,
+            result = self._memory_extractor.process_user_message(
+                thread_id=thread_pk,
+                memory_enabled=memory_enabled,
+                message_text=user_message,
+                source_message_id=source_message_id,
+                agent_id=agent_id,
             )
-            
-            # Merge candidates from both sources
-            all_candidates = classified + llm_candidates
-            
-            # Store high-confidence memories with deduplication
-            for candidate in all_candidates:
-                if candidate.get("confidence", 0) >= settings.AUTO_MEMORY_CONFIDENCE_THRESHOLD:
-                    content = candidate.get("content", "")
-                    
-                    if not content.strip():
-                        continue
-                    
-                    # Check for duplicates
-                    is_dup, dup_memory, _ = await self._check_memory_duplicate(
-                        content=content,
-                        scope=session_id,
-                    )
-                    
-                    if is_dup and dup_memory:
-                        logger.debug(
-                            f"Skipping duplicate memory",
-                            extra={
-                                "event": "memory_duplicate_skipped",
-                                "content_hash": hash(content),
-                                "existing_id": dup_memory.id,
-                            }
-                        )
-                        continue
-                    
-                    # Create memory (embedding will be generated automatically)
-                    memory_store.create_memory(
-                        memory_type=candidate.get("memory_type") or candidate.get("category", "note"),
-                        content=content,
-                        tags=candidate.get("tags", []),
-                        scope=session_id,
-                        confidence=candidate.get("confidence", 0.5),
-                        metadata={
-                            "thread_id": thread_id, 
-                            "source": "auto_extraction",
-                            "extraction_method": candidate.get("extraction_method", "rules"),
-                        }
-                    )
-                    
-                    logger.debug(
-                        f"Created memory from extraction",
-                        extra={
-                            "event": "memory_created",
-                            "memory_type": candidate.get("memory_type") or candidate.get("category"),
-                            "confidence": candidate.get("confidence"),
-                        }
-                    )
+            if result.get("ok"):
+                logger.debug(
+                    "Memory extracted",
+                    extra={
+                        "event": "memory_v15_extracted",
+                        "thread_id": thread_id,
+                        "memory_ref": result.get("memory_ref"),
+                        "op": result.get("op"),
+                    },
+                )
+            else:
+                logger.debug(
+                    "Memory extraction skipped/blocked",
+                    extra={
+                        "event": "memory_v15_skipped",
+                        "thread_id": thread_id,
+                        "error": result.get("error"),
+                    },
+                )
         except Exception as e:
             logger.warning(
                 f"Memory extraction failed: {e}",
-                extra={"event": "memory_extraction_failed", "session_id": session_id}
+                extra={"event": "memory_extraction_failed", "thread_id": thread_id}
             )
-    
-    async def _llm_memory_extraction(
-        self,
-        conversation: str,
-        session_id: str,
-    ) -> List[Dict[str, Any]]:
-        """
-        Use LLM to extract memories from conversation.
-        
-        Args:
-            conversation: The conversation text
-            session_id: Session ID for context
-            
-        Returns:
-            List of memory candidate dictionaries
-        """
+
+    def _resolve_job_persona(self, job: Job) -> ResolvedPersona:
+        payload = job.payload or {}
+        mode_ref = payload.get("mode")
+        soul_ref = payload.get("soul_ref") or payload.get("active_soul")
+        file_policy = {
+            "max_read_bytes": int(getattr(settings, "FILES_MAX_READ_BYTES", 1_048_576)),
+            "max_write_bytes": int(getattr(settings, "FILES_MAX_WRITE_BYTES", 262_144)),
+            "allowed_extensions": list(getattr(settings, "FILES_ALLOWED_WRITE_EXTENSIONS", [".md", ".txt", ".json", ".yaml", ".yml", ".log"])),
+        }
         try:
-            from app.memory.extractor_llm import get_llm_extractor
-            
-            extractor = get_llm_extractor()
-            
-            if not extractor.is_enabled:
-                return []
-            
-            # Extract memory using LLM
-            result = extractor.extract_memory(
-                content=conversation,
-                context={"session_id": session_id},
+            return resolve_persona(
+                mode_ref=mode_ref,
+                soul_ref=soul_ref,
+                tool_profile=str(payload.get("tool_profile", "balanced")),
+                base_file_policy=file_policy,
             )
-            
-            if result.get("memory_type"):
-                return [{
-                    "memory_type": result["memory_type"],
-                    "content": result["content"],
-                    "tags": result.get("tags", []),
-                    "confidence": result.get("confidence", 0.5),
-                    "extraction_method": "llm",
-                }]
-            
-            return []
-            
-        except Exception as e:
-            logger.debug(f"LLM memory extraction failed: {e}")
-            return []
-    
-    async def _check_memory_duplicate(
-        self,
-        content: str,
-        scope: str,
-    ) -> Tuple[bool, Optional[Any], Optional[float]]:
-        """
-        Check if a memory is a duplicate.
-        
-        Args:
-            content: Memory content to check
-            scope: Memory scope
-            
-        Returns:
-            Tuple of (is_duplicate, existing_memory, similarity_score)
-        """
-        try:
-            from app.memory.dedupe import get_deduplicator
-            
-            deduplicator = get_deduplicator()
-            
-            is_dup, dup_memory, score = deduplicator.check_and_dedupe(
-                content=content,
-                scope=scope,
-                auto_mark=False,
+        except PersonaResolutionError as exc:
+            logger.warning(
+                "Falling back to defaults due to persona resolution error: %s",
+                exc.message,
+                extra={"event": "persona_resolution_fallback", "error_code": exc.code},
             )
-            
-            return (is_dup, dup_memory, score)
-            
-        except Exception as e:
-            logger.debug(f"Duplicate check failed: {e}")
-            return (False, None, None)
+            return resolve_persona(
+                mode_ref=getattr(settings, "DEFAULT_MODE_REF", "builder@1.5.0"),
+                soul_ref=getattr(settings, "DEFAULT_SOUL_REF", "teiken_claw_agent@1.5.0"),
+                tool_profile=str(payload.get("tool_profile", "balanced")),
+                base_file_policy=file_policy,
+            )
 
 
 # Global runtime instance

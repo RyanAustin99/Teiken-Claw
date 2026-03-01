@@ -26,7 +26,8 @@ async def test_files_write_blocks_traversal(tmp_path):
     with runtime_workspace_root(tmp_path):
         result = await tool.execute(path="../evil.md", content="nope")
     assert result.ok is False
-    assert result.error_code == "PATH_SECURITY_ERROR"
+    assert result.error_code == "ERR_PATH_TRAVERSAL"
+    assert result.metadata["error"]["legacy_code"] == "PATH_SECURITY_ERROR"
     assert not (tmp_path.parent / "evil.md").exists()
 
 
@@ -36,5 +37,6 @@ async def test_files_write_blocks_absolute_path(tmp_path):
     with runtime_workspace_root(tmp_path):
         result = await tool.execute(path=str((tmp_path / "abs.md").resolve()), content="nope")
     assert result.ok is False
-    assert result.error_code == "PATH_SECURITY_ERROR"
+    assert result.error_code == "ERR_PATH_ABSOLUTE"
+    assert result.metadata["error"]["legacy_code"] == "PATH_SECURITY_ERROR"
 

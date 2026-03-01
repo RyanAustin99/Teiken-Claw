@@ -12,8 +12,10 @@ from typing import Any, Callable, Dict, List, Optional
 from uuid import uuid4
 
 from app.scheduler.control_state import get_control_state_manager
+from app.observability.file_audit import FileAuditContext, runtime_file_audit_context
 from app.tools.base import ToolResult
 from app.tools.files_tool import runtime_workspace_root
+from app.tools.files_service import runtime_file_policy_override
 from app.tools.policies import check_tool_permission
 from app.tools.protocol import ToolCall, ToolResultEnvelope
 from app.tools.registry import ToolRegistry
@@ -43,6 +45,7 @@ class ToolExecutionContext:
 
     agent_id: Optional[str] = None
     session_id: Optional[str] = None
+    thread_id: Optional[str] = None
     scheduler_job_id: Optional[str] = None
     scheduler_run_id: Optional[str] = None
     chat_id: Optional[str] = None
@@ -54,6 +57,8 @@ class ToolExecutionContext:
     max_calls_per_message: int = 3
     timeout_sec: float = 30.0
     max_result_chars: int = 12000
+    allowed_tools: Optional[set[str]] = None
+    file_policy_override: Optional[Dict[str, Any]] = None
     audit_log: Optional[Callable[[str, Optional[str], Optional[Dict[str, Any]], str], None]] = None
     control_state_manager: Any = None
 
@@ -106,6 +111,7 @@ class ToolExecutor:
                     "call_id": call.id,
                     "agent_id": ctx.agent_id,
                     "session_id": ctx.session_id,
+                    "thread_id": ctx.thread_id,
                     "scheduler_job_id": ctx.scheduler_job_id,
                     "scheduler_run_id": ctx.scheduler_run_id,
                     "correlation_id": correlation_id,
@@ -192,6 +198,7 @@ class ToolExecutor:
         execution_ctx = {
             "agent_id": ctx.agent_id,
             "session_id": ctx.session_id,
+            "thread_id": ctx.thread_id,
             "scheduler_job_id": ctx.scheduler_job_id,
             "scheduler_run_id": ctx.scheduler_run_id,
             "chat_id": ctx.chat_id,
@@ -200,8 +207,17 @@ class ToolExecutor:
         }
 
         workspace_cm = runtime_workspace_root(ctx.workspace_root) if ctx.workspace_root else nullcontext()
+        file_policy_cm = runtime_file_policy_override(ctx.file_policy_override) if ctx.file_policy_override else nullcontext()
+        file_audit_cm = runtime_file_audit_context(
+            FileAuditContext(
+                agent_id=str(ctx.agent_id) if ctx.agent_id is not None else None,
+                thread_id=str(ctx.thread_id) if ctx.thread_id is not None else None,
+                session_id=str(ctx.session_id) if ctx.session_id is not None else None,
+                correlation_id=correlation_id,
+            )
+        )
         try:
-            with workspace_cm:
+            with workspace_cm, file_policy_cm, file_audit_cm:
                 raw_result: ToolResult = await asyncio.wait_for(
                     self.registry.execute_tool_call(tool_call=tool_call_payload, context=execution_ctx),
                     timeout=max(0.1, ctx.timeout_sec),
@@ -235,11 +251,20 @@ class ToolExecutor:
 
         error_message = raw_result.error_message or raw_result.content or "tool execution failed"
         error_type = (raw_result.error_code or "execution_error").lower()
+        error_payload: Dict[str, Any] = {"type": error_type, "message": error_message}
+        metadata_error = raw_result.metadata.get("error") if isinstance(raw_result.metadata, dict) else None
+        if isinstance(metadata_error, dict):
+            if metadata_error.get("code"):
+                error_payload["code"] = metadata_error.get("code")
+            if metadata_error.get("hint"):
+                error_payload["hint"] = metadata_error.get("hint")
+            if metadata_error.get("legacy_code"):
+                error_payload["legacy_code"] = metadata_error.get("legacy_code")
         return ToolResultEnvelope(
             id=call.id,
             tool=call.tool,
             ok=False,
-            error={"type": error_type, "message": error_message},
+            error=error_payload,
             correlation_id=correlation_id,
         )
 
@@ -264,6 +289,9 @@ class ToolExecutor:
 
         if not tool.policy.enabled:
             return f"tool '{call.tool}' is disabled"
+
+        if ctx.allowed_tools is not None and call.tool not in ctx.allowed_tools:
+            return f"tool '{call.tool}' is not allowed by active soul/mode policy"
 
         return None
 

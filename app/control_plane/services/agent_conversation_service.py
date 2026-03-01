@@ -10,6 +10,7 @@ from typing import Dict, List, Optional
 
 from app.config.logging import get_logger
 from app.config.settings import settings
+from app.agent.prompt_assembler import PromptAssembler
 from app.control_plane.domain.errors import ValidationError
 from app.control_plane.domain.models import AgentOnboardingState, AgentRecord, OnboardingStatus
 from app.interfaces.tc_profile_strip import extract_tc_profile
@@ -26,6 +27,7 @@ from app.tools.executor import ToolExecutionContext, ToolExecutor
 from app.tools.loop import run_tool_loop
 from app.tools.protocol import ToolResultEnvelope
 from app.tools.registry import get_tool_registry
+from app.persona.resolve import resolve_persona
 
 logger = get_logger(__name__)
 
@@ -98,6 +100,7 @@ class AgentConversationService:
         self.audit_service = audit_service
         self.memory_store = get_memory_store()
         self.tool_registry = get_tool_registry()
+        self.prompt_assembler = PromptAssembler()
         existing_tools = set(self.tool_registry.list_tools())
         required = {"files.write", "files.read", "files.list", "files.exists"}
         if not required.issubset(existing_tools):
@@ -138,7 +141,7 @@ class AgentConversationService:
         tool_lines = self._resolve_tools(agent.tool_profile)
         style_lines = self._resolve_style_lines(agent)
         skill_lines = self._resolve_skills()
-        system_prompt = self.prompt_template_service.render(
+        template_system_prompt = self.prompt_template_service.render(
             agent,
             default_model=cfg.default_model,
             capability_lines=capability_lines,
@@ -147,8 +150,42 @@ class AgentConversationService:
             skill_lines=skill_lines,
         )
 
+        mode_ref = session.active_mode or agent.default_mode or getattr(settings, "DEFAULT_MODE_REF", "builder@1.5.0")
+        soul_ref = session.active_soul or agent.default_soul or getattr(settings, "DEFAULT_SOUL_REF", "teiken_claw_agent@1.5.0")
+        base_file_policy = {
+            "max_read_bytes": int(getattr(settings, "FILES_MAX_READ_BYTES", 1_048_576)),
+            "max_write_bytes": int(getattr(settings, "FILES_MAX_WRITE_BYTES", 262_144)),
+            "allowed_extensions": list(getattr(settings, "FILES_ALLOWED_WRITE_EXTENSIONS", [".md", ".txt", ".json", ".yaml", ".yml", ".log"])),
+        }
+        persona = resolve_persona(
+            mode_ref=mode_ref,
+            soul_ref=soul_ref,
+            tool_profile=agent.tool_profile,
+            base_file_policy=base_file_policy,
+        )
+
         transcript = self.session_service.get_transcript(session_id)
         history = transcript[-30:]
+        transcript_items = [{"id": str(item.id), "role": item.role, "content": item.content} for item in history]
+        bundle = self.prompt_assembler.assemble(
+            resolved_soul_ref=persona.resolved_soul_ref,
+            resolved_mode_ref=persona.resolved_mode_ref,
+            soul_hash=persona.soul.sha256,
+            mode_hash=persona.mode.sha256,
+            soul_prompt=persona.soul.definition.system_prompt,
+            soul_principles=persona.soul.definition.principles,
+            mode_overlay_prompt=persona.mode.definition.overlay_prompt,
+            mode_output_requirements=persona.mode.definition.output_shape.model_dump(mode="json"),
+            memory_items=[],
+            transcript_messages=transcript_items,
+            effective_tool_policy={
+                "allowed_tools": sorted(persona.effective_allowed_tools) if persona.effective_allowed_tools is not None else ["*"],
+                "max_tool_turns": persona.max_tool_turns,
+            },
+            effective_file_policy=persona.effective_file_policy,
+            platform_policy_version=str(getattr(settings, "APP_VERSION", "0.0.0")),
+        )
+        system_prompt = f"{bundle.system_prompt}\n\n# Control Plane Context\n{template_system_prompt}"
         messages: List[Dict[str, str]] = [{"role": "system", "content": system_prompt}]
         if agent.onboarding_state == AgentOnboardingState.WAITING_USER_PREFS:
             messages.append({"role": "system", "content": ONBOARDING_PENDING_BLOCK})
@@ -168,6 +205,8 @@ class AgentConversationService:
             correlation_id=f"cp-{session.id}",
             max_calls_per_message=max(1, cfg.max_tool_calls_per_message),
             timeout_sec=max(1.0, float(cfg.tool_call_timeout_sec)),
+            allowed_tools=set(persona.effective_allowed_tools) if persona.effective_allowed_tools is not None else None,
+            file_policy_override=persona.effective_file_policy,
             audit_log=self._audit_log,
         )
 
@@ -180,7 +219,7 @@ class AgentConversationService:
             model_call=_model_call,
             executor=self.tool_executor,
             execution_context=context,
-            max_tool_turns_per_request=max(1, cfg.max_tool_turns_per_request),
+            max_tool_turns_per_request=max(1, min(cfg.max_tool_turns_per_request, persona.max_tool_turns or cfg.max_tool_turns_per_request)),
         )
         visible_response = loop_result.final_response or ""
         _, stripped, _ = extract_tc_profile(visible_response)

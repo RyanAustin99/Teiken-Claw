@@ -114,6 +114,8 @@ from app.soul import (
     get_policy_manager,
     init_policy_manager,
 )
+from app.souls.registry import get_soul_registry
+from app.modes.registry import get_mode_registry
 
 # Phase 11: Sub-agent imports
 from app.subagents.manager import SubAgentManager, get_subagent_manager, set_subagent_manager
@@ -289,6 +291,21 @@ async def _initialize_queue_system() -> dict:
         
         # 7. Initialize Agent Runtime
         logger.info("Initializing agent runtime...")
+        try:
+            soul_registry = get_soul_registry()
+            mode_registry = get_mode_registry()
+            souls = soul_registry.list_souls()
+            modes = mode_registry.list_modes()
+            logger.info(
+                "Loaded persona registries",
+                extra={
+                    "event": "persona_registries_loaded",
+                    "soul_refs": [item.ref for item in souls],
+                    "mode_refs": [item.ref for item in modes],
+                },
+            )
+        except Exception as exc:
+            logger.warning("Failed to preload persona registries: %s", exc, extra={"event": "persona_registry_load_failed"})
         _agent_runtime = AgentRuntime(tool_registry=_tool_registry)
         set_agent_runtime(_agent_runtime)
         status["agent_runtime"] = "initialized"

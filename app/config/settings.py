@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     
     APP_NAME: str = "Teiken Claw"
     APP_DESCRIPTION: str = "AI Agent System"
-    APP_VERSION: str = "1.0.0"
+    APP_VERSION: str = "1.22.0"
     DEBUG: bool = False
     ENVIRONMENT: str = "development"
     
@@ -126,6 +126,17 @@ class Settings(BaseSettings):
     AUTO_MEMORY_CONFIDENCE_THRESHOLD: float = 0.7
     MAX_THREAD_MESSAGES: int = 100
     THREAD_INACTIVITY_TIMEOUT_MIN: int = 30
+    MEMORY_CONTEXT_MAX_MESSAGES: int = 20
+    MEMORY_CONTEXT_MAX_ITEMS: int = 20
+    MEMORY_ROUTER_SIMILARITY_THRESHOLD: float = 0.35
+    MEMORY_SECRET_BLOCK_ENABLED: bool = True
+    MEMORY_THREAD_PROPOSE_ONLY: bool = True
+    DEFAULT_SOUL_REF: str = "teiken_claw_agent@1.5.0"
+    DEFAULT_MODE_REF: str = "builder@1.5.0"
+    SOULS_DIR: str = "./souls"
+    MODES_DIR: str = "./modes"
+    SOULS_HOT_RELOAD: bool = False
+    MODES_HOT_RELOAD: bool = False
     MEMORY_TYPE: str = "sqlite"
     MEMORY_URL: str = "sqlite:///./data/memory.db"
     
@@ -169,6 +180,12 @@ class Settings(BaseSettings):
     
     # Files Tool Settings
     FILES_MAX_SIZE: int = 10_000_000  # 10MB
+    FILES_MAX_READ_BYTES: int = 1_048_576  # 1MB
+    FILES_MAX_WRITE_BYTES: int = 262_144  # 256KB
+    FILES_SOFT_WRITE_WARN_RATIO: float = 0.75
+    FILES_ALLOWED_WRITE_EXTENSIONS: List[str] = [".md", ".txt", ".json", ".yaml", ".yml", ".log"]
+    FILES_ALLOW_OVERWRITE: bool = True
+    FILES_AUTO_MKDIR: bool = True
     
     # Exec Tool Settings
     EXEC_TIMEOUT_SEC: float = 60.0

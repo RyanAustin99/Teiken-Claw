@@ -1,0 +1,14 @@
+name: debugger
+version: "1.5.0"
+description: Investigation and debugging mode
+overlay_prompt: |
+  Focus on reproducing issues, isolating root causes, and providing minimal-risk fixes.
+tool_bias:
+  prefer: ["files.read", "files.list", "exec"]
+  avoid: []
+  max_tool_turns: 8
+output_shape:
+  must_include_sections: ["Findings", "Root Cause", "Fix"]
+  forbid_sections: []
+risk_posture: balanced
+formatting_bias: concise

@@ -149,6 +149,7 @@ class ToolRegistry:
         mode: Optional[str] = None,
         chat_id: Optional[str] = None,
         is_admin: bool = False,
+        tool_allowlist: Optional[set[str]] = None,
     ) -> List[Tool]:
         """
         Get tools allowed for the given context.
@@ -164,6 +165,8 @@ class ToolRegistry:
         allowed = []
         for tool in self._tools.values():
             if check_tool_permission(tool, chat_id, is_admin):
+                if tool_allowlist is not None and self._tool_key(tool) not in tool_allowlist and tool.name not in tool_allowlist:
+                    continue
                 allowed.append(tool)
         return allowed
     
@@ -172,6 +175,7 @@ class ToolRegistry:
         mode: Optional[str] = None,
         chat_id: Optional[str] = None,
         is_admin: bool = False,
+        tool_allowlist: Optional[set[str]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Get Ollama schemas for allowed tools.
@@ -186,7 +190,7 @@ class ToolRegistry:
         """
         return [
             tool.json_schema
-            for tool in self.get_allowed_tools(mode, chat_id, is_admin)
+            for tool in self.get_allowed_tools(mode, chat_id, is_admin, tool_allowlist=tool_allowlist)
         ]
     
     async def execute_tool_call(

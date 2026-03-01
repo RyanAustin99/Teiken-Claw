@@ -1,294 +1,213 @@
 """
-Deterministic memory extraction rules for Teiken Claw.
-
-This module provides:
-- Content classification and filtering
-- Category detection
-- Sensitive content detection
-- Deterministic extraction rules
-- Confidence scoring
+Deterministic memory extraction rules for Memory v1.5.
 """
 
+from __future__ import annotations
+
 import re
-from typing import List, Dict, Optional, Tuple
-from datetime import datetime
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
+
+from app.memory.secret_filter import looks_like_secret
+
+
+TRIGGER_PHRASES = (
+    "remember that",
+    "from now on",
+    "always",
+    "never",
+    "my preference is",
+    "call me",
+    "default should be",
+    "we decided",
+)
+
+ALLOWED_CATEGORIES = {
+    "identity",
+    "preference",
+    "project_setting",
+    "workflow",
+    # Compatibility categories retained for legacy callers/tests.
+    "project",
+    "fact",
+    "note",
+    "environment",
+    "schedule_pattern",
+}
+
+BLOCKED_CATEGORY_PATTERNS: Tuple[Tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\b(account|routing)\s+number\b", re.IGNORECASE), "ERR_MEM_BLOCKED_CATEGORY"),
+    (re.compile(r"\b(credit\s*card|card\s*number)\b", re.IGNORECASE), "ERR_MEM_BLOCKED_CATEGORY"),
+    (re.compile(r"\b(health|diagnosis|medication|medical)\b", re.IGNORECASE), "ERR_MEM_BLOCKED_CATEGORY"),
+    (re.compile(r"\b(ssn|social security|passport number)\b", re.IGNORECASE), "ERR_MEM_BLOCKED_CATEGORY"),
+)
+
+
+@dataclass(frozen=True)
+class MemoryCandidate:
+    category: str
+    key: str
+    value: str
+    confidence: float = 1.0
 
 
 class MemoryExtractionRules:
-    """Deterministic memory extraction rules."""
-    
-    def __init__(self):
-        # Configuration
-        self._allowed_categories = {
-            "preference", "project", "workflow", "environment", 
-            "schedule_pattern", "fact", "note"
-        }
-        self._sensitive_patterns = [
-            r'password', r'secret', r'api[_-]?key', r'token', r'private',
-            r'auth', r'credential', r'login', r'passphrase', r'private[_-]?key',
-            r'credit[_\s-]?card', r'card[_\s-]?number', r'ssn', r'social[_\s-]?security'
-        ]
-        self._category_patterns = {
-            "preference": [
-                r'I prefer', r'I like', r'I dislike', r'I hate', r'I love',
-                r'best', r'favorite', r'favourite', r'worst', r'most', r'least'
-            ],
-            "project": [
-                r'project', r'task', r'assignment', r'initiative', r'campaign',
-                r'work', r'job', r'deliverable', r'goal', r'objective'
-            ],
-            "workflow": [
-                r'process', r'workflow', r'procedure', r'routine', r'habit',
-                r'step', r'stage', r'phase', r'cycle', r'method'
-            ],
-            "environment": [
-                r'environment', r'setup', r'configuration', r'config', r'install',
-                r'dev', r'development', r'prod', r'production', r'staging', r'test'
-            ],
-            "schedule_pattern": [
-                r'every', r'always', r'usually', r'often', r'sometimes',
-                r'never', r'weekly', r'monthly', r'daily', r'hourly', r'regularly'
-            ],
-            "fact": [
-                r'is', r'are', r'was', r'were', r'will be', r'has', r'have', r'had'
-            ],
-            "note": [
-                r'note', r'remember', r'important', r'key', r'critical', r'essential',
-                r'vital', r'must', r'need', r'should', r'could', r'would'
-            ]
-        }
-        self._reject_patterns = [
-            r'^/thread\s+', r'^/mode\s+', r'^/help', r'^/start', r'^/ping',
-            r'^/status', r'^/admin', r'^/pause', r'^/resume', r'^/jobs',
-            r'^https?://', r'^www\.', r'^@', r'^#', r'^$', r'^\s*$'
-        ]
-    
-    # =========================================================================
-    # Classification
-    # =========================================================================
-    
-    def classify_candidates(self, candidates: List[str]) -> List[Dict]:
-        """Classify and filter candidate memories."""
-        classified = []
-        
-        for candidate in candidates:
-            # Skip empty or whitespace-only content
-            if not candidate or not candidate.strip():
-                continue
-            
-            # Check for rejection patterns
-            if self._is_rejected_content(candidate):
-                continue
-            
-            # Check for sensitive content
-            if self._is_sensitive_content(candidate):
-                continue
-            
-            # Classify category
-            category = self._get_category(candidate)
-            if not category:
-                continue
-            
-            # Extract facts and preferences
-            facts = self._extract_facts(candidate)
-            preferences = self._extract_preferences(candidate)
-            
-            # Calculate confidence
-            confidence = self._calculate_confidence(candidate, category)
-            
-            classified.append({
-                "content": candidate.strip(),
-                "category": category,
-                "facts": facts,
-                "preferences": preferences,
-                "confidence": confidence,
-                "timestamp": datetime.now().isoformat()
-            })
-        
-        return classified
-    
-    def _is_allowed_category(self, category: str) -> bool:
-        """Check if category is allowed."""
-        return category in self._allowed_categories
-    
-    def _is_sensitive_content(self, content: str) -> bool:
-        """Check if content contains sensitive information."""
-        content_lower = content.lower()
-        
-        for pattern in self._sensitive_patterns:
-            if re.search(pattern, content_lower):
-                return True
-        
-        # Check for common sensitive patterns
-        if any(keyword in content_lower for keyword in [
-            'password', 'secret', 'key', 'token', 'private',
-            'auth', 'credential', 'login', 'passphrase',
-            'credit card', 'card number', 'ssn', 'social security'
-        ]):
-            return True
-        
-        return False
-    
-    def _get_category(self, content: str) -> Optional[str]:
-        """Get category for content."""
-        content_lower = content.lower()
-        
-        # Check category patterns in priority order
-        for category, patterns in self._category_patterns.items():
-            for pattern in patterns:
-                if re.search(pattern, content_lower):
-                    return category
-        
-        # Default to 'note' if no specific category found
-        return "note"
-    
-    def _extract_facts(self, content: str) -> List[str]:
-        """Extract facts from content."""
-        facts = []
-        
-        # Simple fact extraction - look for declarative statements
-        # This is a placeholder for more sophisticated extraction
-        
-        # Split into sentences
-        sentences = re.split(r'[.!?]+', content)
-        
-        for sentence in sentences:
-            sentence = sentence.strip()
-            if sentence and len(sentence) > 10:  # Minimum length for a fact
-                # Check if it looks like a fact (declarative statement)
-                if sentence.endswith(('is', 'are', 'was', 'were', 'has', 'have', 'had')):
-                    facts.append(sentence)
-                elif sentence.count(' ') > 5:  # At least 6 words
-                    facts.append(sentence)
-        
-        return facts[:3]  # Return up to 3 facts
-    
-    def _extract_preferences(self, content: str) -> List[str]:
-        """Extract preferences from content."""
-        preferences = []
-        
-        # Look for preference indicators
-        preference_indicators = [
-            r'I prefer', r'I like', r'I dislike', r'I hate', r'I love',
-            r'best', r'favorite', r'favourite', r'worst', r'most', r'least'
-        ]
-        
-        content_lower = content.lower()
-        
-        for indicator in preference_indicators:
-            match = re.search(indicator, content_lower)
-            if match:
-                # Extract the preference phrase
-                start = match.end()
-                # Look for end of preference (next sentence or end)
-                end_match = re.search(r'[.!?]', content_lower[start:])
-                if end_match:
-                    end = start + end_match.start()
-                else:
-                    end = len(content)
-                
-                preference = content[match.start():end].strip()
-                if preference:
-                    preferences.append(preference)
-        
-        return preferences[:2]  # Return up to 2 preferences
+    """Deterministic extraction rules and policy checks."""
 
-    # =========================================================================
-    # Public Compatibility API
-    # =========================================================================
+    def should_consider_memory(self, message_text: str) -> bool:
+        text = (message_text or "").strip().lower()
+        if not text:
+            return False
+        return any(phrase in text for phrase in TRIGGER_PHRASES)
+
+    def blocked_category_filter(self, text: str) -> Tuple[bool, Optional[str]]:
+        body = text or ""
+        secret_like, reason = looks_like_secret(body)
+        if secret_like:
+            return True, reason
+        for pattern, code in BLOCKED_CATEGORY_PATTERNS:
+            if pattern.search(body):
+                return True, code
+        return False, None
+
+    def extract_candidate(self, message_text: str) -> Optional[MemoryCandidate]:
+        text = (message_text or "").strip()
+        if not text:
+            return None
+
+        # 1) identity.preferred_name
+        identity_match = re.search(r"\b(?:call me|my name is)\s+([A-Za-z][A-Za-z0-9 _'\-]{0,48})", text, re.IGNORECASE)
+        if identity_match:
+            return MemoryCandidate(category="identity", key="preferred_name", value=identity_match.group(1).strip())
+
+        # 2) project_setting.default_*
+        default_match = re.search(r"\bdefault\s+(.+?)\s+(?:should be|is)\s+(.+)$", text, re.IGNORECASE)
+        if default_match:
+            lhs = default_match.group(1).strip().lower()
+            rhs = default_match.group(2).strip()
+            key = self._project_setting_key(lhs)
+            if key:
+                return MemoryCandidate(category="project_setting", key=key, value=rhs)
+
+        # 3) preference
+        pref_match = re.search(r"\b(?:my preference is|i prefer)\s+(.+)$", text, re.IGNORECASE)
+        if pref_match:
+            value = pref_match.group(1).strip()
+            key = self._preference_key(value)
+            if key:
+                return MemoryCandidate(category="preference", key=key, value=value)
+
+        # 4) explicit team decision
+        decided_match = re.search(r"\bwe decided\s+(.+)$", text, re.IGNORECASE)
+        if decided_match:
+            value = decided_match.group(1).strip()
+            if value:
+                return MemoryCandidate(category="project_setting", key="decision", value=value)
+
+        # 5) workflow directives
+        workflow_match = re.search(r"\bfrom now on[, ]+always\s+(.+)$", text, re.IGNORECASE)
+        if workflow_match:
+            value = workflow_match.group(1).strip()
+            if value:
+                return MemoryCandidate(category="workflow", key="default_rule", value=value)
+
+        return None
+
+    def dedupe_key(self, category: str, key: str) -> str:
+        return f"{(category or '').strip().lower()}:{(key or '').strip().lower()}"
+
+    def _project_setting_key(self, lhs: str) -> Optional[str]:
+        if "write cap" in lhs or "max write" in lhs:
+            return "write_cap"
+        if "read cap" in lhs or "max read" in lhs:
+            return "read_cap"
+        if "mode" in lhs:
+            return "mode_default"
+        clean = re.sub(r"[^a-z0-9]+", "_", lhs).strip("_")
+        if not clean:
+            return None
+        return clean[:64]
+
+    def _preference_key(self, value: str) -> Optional[str]:
+        lower = value.lower()
+        if "concise" in lower:
+            return "tone"
+        if "verbose" in lower:
+            return "tone"
+        if "markdown" in lower or "format" in lower:
+            return "format"
+        return "general"
+
+    # ---------------------------------------------------------------------
+    # Backward-compatible wrappers for existing callers/tests.
+    # ---------------------------------------------------------------------
+
+    def classify_candidates(self, candidates: List[str]) -> List[Dict]:
+        results: List[Dict] = []
+        for item in candidates:
+            blocked, reason = self.blocked_category_filter(item)
+            if blocked:
+                continue
+            candidate = self.extract_candidate(item)
+            if not candidate:
+                continue
+            results.append(
+                {
+                    "content": candidate.value,
+                    "category": candidate.category,
+                    "key": candidate.key,
+                    "confidence": candidate.confidence,
+                }
+            )
+        return results
 
     def is_allowed_category(self, category: str) -> bool:
-        """Public wrapper for allowed-category checks."""
-        return self._is_allowed_category(category)
+        return (category or "").strip().lower() in ALLOWED_CATEGORIES
 
     def is_sensitive_content(self, content: str) -> bool:
-        """Public wrapper for sensitive content checks."""
-        return self._is_sensitive_content(content)
+        blocked, reason = self.blocked_category_filter(content or "")
+        return bool(blocked and reason is not None)
 
     def get_category(self, content: str) -> Optional[str]:
-        """Public wrapper for category detection."""
-        return self._get_category(content)
+        text = (content or "").strip()
+        candidate = self.extract_candidate(text)
+        if candidate:
+            return candidate.category
+        lower = text.lower()
+        if "project" in lower:
+            return "project"
+        if "prefer" in lower or "preference" in lower:
+            return "preference"
+        if re.search(r"\b(is|are|was|were|has|have)\b", lower):
+            return "fact"
+        if lower:
+            return "note"
+        return None
 
     def extract_facts(self, content: str) -> List[str]:
-        """Public wrapper for fact extraction."""
-        if not content or not content.strip():
+        text = (content or "").strip()
+        if not text:
             return []
-        return self._extract_facts(content)
+        # keep deterministic and conservative for compatibility paths
+        segments = [segment.strip() for segment in re.split(r"[.!?]\s*", text) if segment.strip()]
+        return [segment for segment in segments if len(segment.split()) >= 4][:3]
 
     def extract_preferences(self, content: str) -> List[str]:
-        """Public wrapper for preference extraction."""
-        if not content or not content.strip():
-            return []
-        return self._extract_preferences(content)
-    
-    # =========================================================================
-    # Filtering
-    # =========================================================================
-    
-    def _is_rejected_content(self, content: str) -> bool:
-        """Check if content should be rejected."""
-        content_lower = content.lower()
-        
-        # Check reject patterns
-        for pattern in self._reject_patterns:
-            if re.match(pattern, content_lower):
-                return True
-        
-        # Check for very short content
-        if len(content.strip()) < 10:
-            return True
-        
-        # Check for too many special characters
-        special_char_ratio = sum(1 for c in content if not c.isalnum()) / len(content)
-        if special_char_ratio > 0.5:
-            return True
-        
-        return False
-    
-    def _calculate_confidence(self, content: str, category: str) -> float:
-        """Calculate confidence score for content."""
-        confidence = 0.5  # Base confidence
-        
-        # Boost confidence for clear category matches
-        if category in ['preference', 'project', 'workflow']:
-            confidence += 0.2
-        
-        # Boost for longer, more detailed content
-        if len(content) > 50:
-            confidence += 0.1
-        elif len(content) > 100:
-            confidence += 0.2
-        
-        # Reduce confidence for content with many special characters
-        special_char_ratio = sum(1 for c in content if not c.isalnum()) / len(content)
-        if special_char_ratio > 0.3:
-            confidence -= 0.1
-        
-        # Reduce confidence for content that looks like commands
-        if any(content.lower().startswith(cmd) for cmd in ['/thread', '/mode', '/help']):
-            confidence -= 0.3
-        
-        return max(0.0, min(1.0, confidence))
+        text = (content or "").strip()
+        matches = re.findall(r"\b(?:my preference is|i prefer)\s+([^.!?]+)", text, re.IGNORECASE)
+        return [m.strip() for m in matches if m.strip()][:3]
 
-
-# =============================================================================
-# Global Extraction Rules Instance
-# =============================================================================
 
 _extraction_rules: Optional[MemoryExtractionRules] = None
 
 
 def get_extraction_rules() -> MemoryExtractionRules:
-    """Get or create the global extraction rules instance."""
     global _extraction_rules
-    
     if _extraction_rules is None:
         _extraction_rules = MemoryExtractionRules()
-    
     return _extraction_rules
 
 
 def set_extraction_rules(rules: MemoryExtractionRules) -> None:
-    """Set the global extraction rules instance (for testing or DI)."""
     global _extraction_rules
     _extraction_rules = rules

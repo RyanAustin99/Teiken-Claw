@@ -17,6 +17,11 @@ from app.memory.store import (
     get_memory_store,
     set_memory_store,
 )
+from app.memory.thread_store import ThreadStore
+from app.memory.message_store import MessageStore
+from app.memory.memory_store_v15 import MemoryStoreV15
+from app.memory.audit_store import MemoryAuditStore
+from app.memory.audit import MemoryAuditLogger
 from app.memory.thread_state import (
     ThreadState,
     get_thread_state,
@@ -56,16 +61,31 @@ from app.memory.retrieval import (
     get_retriever,
     set_retriever,
 )
+from app.memory.extractor import (
+    MemoryExtractor,
+    get_memory_extractor,
+    set_memory_extractor,
+)
+from app.memory.secret_filter import looks_like_secret
 
 __all__ = [
     # Store
     "MemoryStore",
     "get_memory_store",
     "set_memory_store",
+    "ThreadStore",
+    "MessageStore",
+    "MemoryStoreV15",
+    "MemoryAuditStore",
+    "MemoryAuditLogger",
     # Thread State
     "ThreadState",
     "get_thread_state",
     "set_thread_state",
+    "MemoryExtractor",
+    "get_memory_extractor",
+    "set_memory_extractor",
+    "looks_like_secret",
     # Extraction Rules
     "MemoryExtractionRules",
     "get_extraction_rules",

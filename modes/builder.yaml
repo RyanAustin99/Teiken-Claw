@@ -1,0 +1,14 @@
+name: builder
+version: "1.5.0"
+description: Execution-focused implementation mode
+overlay_prompt: |
+  Execute requested changes directly, validate outcomes, and report concrete results.
+tool_bias:
+  prefer: ["files.read", "files.write"]
+  avoid: []
+  max_tool_turns: 10
+output_shape:
+  must_include_sections: []
+  forbid_sections: []
+risk_posture: balanced
+formatting_bias: concise

@@ -101,6 +101,10 @@ from app.agent.context_builder import (
     DEFAULT_RESERVED_TOKENS,
     get_context_builder,
 )
+from app.agent.prompt_assembler import (
+    PromptAssembler,
+    PromptBundle,
+)
 
 # Result Formatter
 from app.agent.result_formatter import (
@@ -186,6 +190,8 @@ __all__ = [
     "DEFAULT_MAX_TOKENS",
     "DEFAULT_RESERVED_TOKENS",
     "get_context_builder",
+    "PromptAssembler",
+    "PromptBundle",
     # Result Formatter
     "TELEGRAM_MAX_LENGTH",
     "CLI_MAX_LENGTH",

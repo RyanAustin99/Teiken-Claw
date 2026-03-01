@@ -76,6 +76,16 @@ class Thread(Base):
     session_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    public_id: Mapped[Optional[str]] = mapped_column(String(26), nullable=True, unique=True, index=True)
+    chat_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    title: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    memory_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    active_mode: Mapped[str] = mapped_column(String(64), default="builder@1.5.0", nullable=False, index=True)
+    active_soul: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    mode_locked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    last_active_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+    topic_fingerprint: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
@@ -115,6 +125,7 @@ class SessionMessage(Base):
     )
     role: Mapped[str] = mapped_column(String(50), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    token_estimate: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     metadata_: Mapped[Optional[dict]] = mapped_column("metadata", JSON, nullable=True)
     
@@ -221,6 +232,73 @@ class MemoryAudit(Base):
             "action IN ('create', 'update', 'delete', 'archive', 'restore')",
             name="ck_audit_action"
         ),
+    )
+
+
+class MemoryItem(Base):
+    """
+    Thread-bound deterministic memory card.
+    """
+
+    __tablename__ = "memory_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    public_id: Mapped[str] = mapped_column(String(26), nullable=False, unique=True, index=True)
+    thread_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("threads.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    category: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    key: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
+    source_message_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("session_messages.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint("confidence >= 0 AND confidence <= 1", name="ck_memory_item_confidence_range"),
+        Index("ix_memory_items_thread_category_key", "thread_id", "category", "key"),
+    )
+
+
+class MemoryAuditEvent(Base):
+    """
+    Audit trail for thread-bound memory operations.
+    """
+
+    __tablename__ = "memory_audit_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    thread_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("threads.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    agent_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    source_message_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("session_messages.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    op: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    memory_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("memory_items.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    category: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    key: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    reason_code: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    details_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "op IN ('add', 'update', 'delete', 'pause', 'resume', 'blocked')",
+            name="ck_memory_audit_event_op",
+        ),
+        CheckConstraint("status IN ('ok', 'blocked', 'error')", name="ck_memory_audit_event_status"),
+        Index("ix_memory_audit_events_thread_ts", "thread_id", "ts"),
     )
 
 
@@ -380,6 +458,70 @@ class ToolAudit(Base):
     )
 
 
+class FileOpAudit(Base):
+    """
+    Audit trail for filesystem operations.
+
+    Stores normalized workspace-relative paths and operation outcomes.
+    """
+
+    __tablename__ = "file_op_audits"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    agent_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    thread_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    session_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    op: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    path_rel: Mapped[str] = mapped_column(String(2048), nullable=False)
+    bytes_in: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    bytes_out: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    error_code: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    correlation_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+
+    __table_args__ = (
+        CheckConstraint("status IN ('success', 'failure')", name="ck_file_op_audit_status"),
+        Index("ix_file_op_audits_ts", "ts"),
+        Index("ix_file_op_audits_session_ts", "session_id", "ts"),
+    )
+
+
+class PersonaAuditEvent(Base):
+    """
+    Audit trail for soul/mode configuration changes.
+    """
+
+    __tablename__ = "persona_audit_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    scope_type: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    thread_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("threads.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    session_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    agent_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    op: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    previous_value: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    new_value: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    prompt_fingerprint: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    reason_code: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    details_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("scope_type IN ('thread', 'session', 'agent')", name="ck_persona_audit_scope"),
+        CheckConstraint(
+            "op IN ('soul_set', 'mode_set', 'mode_lock', 'mode_unlock')",
+            name="ck_persona_audit_op",
+        ),
+        CheckConstraint("status IN ('ok', 'error')", name="ck_persona_audit_status"),
+        Index("ix_persona_audit_scope_ts", "scope_type", "ts"),
+    )
+
+
 class SubagentRun(Base):
     """
     Subagent execution tracking.
@@ -485,11 +627,15 @@ ALL_MODELS = [
     ThreadSummary,
     MemoryRecord,
     MemoryAudit,
+    MemoryItem,
+    MemoryAuditEvent,
     EmbeddingRecord,
     JobDeadLetter,
     SchedulerJobMeta,
     SchedulerJobRun,
     ToolAudit,
+    FileOpAudit,
+    PersonaAuditEvent,
     SubagentRun,
     ControlState,
     IdempotencyKey,
@@ -505,11 +651,15 @@ __all__ = [
     "ThreadSummary",
     "MemoryRecord",
     "MemoryAudit",
+    "MemoryItem",
+    "MemoryAuditEvent",
     "EmbeddingRecord",
     "JobDeadLetter",
     "SchedulerJobMeta",
     "SchedulerJobRun",
     "ToolAudit",
+    "FileOpAudit",
+    "PersonaAuditEvent",
     "SubagentRun",
     "ControlState",
     "IdempotencyKey",

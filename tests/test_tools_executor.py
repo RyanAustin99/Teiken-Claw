@@ -88,3 +88,17 @@ async def test_executor_timeout():
     results = await executor.execute_calls([call], ctx=ctx)
     assert results[0].ok is False
     assert results[0].error["type"] == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_executor_propagates_structured_tool_error(tmp_path):
+    registry = ToolRegistry()
+    registry.register(FilesWriteSubtool(policy=ToolPolicy(enabled=True)))
+    executor = ToolExecutor(registry)
+    ctx = ToolExecutionContext(tool_profile="balanced", workspace_root=tmp_path)
+    call = ToolCall(id="tc_1", tool="files.write", args={"path": "../x.md", "content": "x"})
+    results = await executor.execute_calls([call], ctx=ctx)
+    assert results[0].ok is False
+    assert results[0].error["type"] == "err_path_traversal"
+    assert results[0].error["code"] == "ERR_PATH_TRAVERSAL"
+    assert results[0].error["legacy_code"] == "PATH_SECURITY_ERROR"

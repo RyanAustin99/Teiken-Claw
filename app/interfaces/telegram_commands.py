@@ -17,6 +17,21 @@ from typing import Optional, List, Dict, Any
 from app.config.logging import get_logger
 from app.config.settings import settings
 from app.memory.store import get_memory_store
+from app.memory.thread_store import ThreadStore
+from app.memory.thread_state import ThreadState
+from app.memory.memory_store_v15 import MemoryStoreV15
+from app.memory.audit import MemoryAuditLogger
+from app.persona import get_persona_audit_logger
+from app.persona.resolve import (
+    ERR_MODE_NOT_FOUND,
+    ERR_SOUL_NOT_FOUND,
+    ERR_MODE_LOCKED,
+    MODE_ALIASES,
+    PersonaResolutionError,
+    resolve_persona,
+)
+from app.modes.registry import get_mode_registry
+from app.souls.registry import get_soul_registry
 from app.queue.dispatcher import get_dispatcher
 from app.queue.workers import get_worker_pool
 from app.agent import get_ollama_client, get_circuit_breaker_metrics
@@ -37,7 +52,7 @@ class CommandRouter:
     """
     
     # Available modes
-    MODES = ["default", "architect", "operator", "coder", "researcher"]
+    MODES = ["architect", "builder", "debugger", "research", "minimal"]
     
     def __init__(self, admin_chat_ids: Optional[List[int]] = None, control_plane_context: Optional[Any] = None):
         """
@@ -52,6 +67,11 @@ class CommandRouter:
         self._paused_chats: set = set()
         self._paused_jobs: set = set()
         self._all_paused = False
+        self._thread_store = ThreadStore()
+        self._thread_state = ThreadState(session=self._thread_store._session)
+        self._memory_store_v15 = MemoryStoreV15(session=self._thread_store._session)
+        self._memory_audit = MemoryAuditLogger()
+        self._persona_audit = get_persona_audit_logger()
         self.control_plane_context = control_plane_context
         self._hatch_sessions: Dict[str, Dict[str, str]] = {}
         
@@ -126,19 +146,31 @@ class CommandRouter:
 
 *Mode Commands:*
 /mode \\- Show current mode
+/mode list \\- List available modes
+/mode show \\<name\\> \\- Show mode details
 /mode \\<name\\> \\- Switch mode
-  Modes: default, architect, operator, coder, researcher
+/mode lock \\- Prevent mode switching
+/mode unlock \\- Allow mode switching
+  Modes: architect, builder, debugger, research, minimal
+
+*Soul Commands:*
+/soul list \\- List available souls
+/soul show \\<name\\> \\- Show soul details
+/soul use \\<name\\> \\- Set active soul override
 
 *Thread Commands:*
 /thread \\- Show current thread info
-/thread new \\- Start a new thread
-/thread summary \\- Show thread summary
+/thread new \\<title\\> \\- Start and activate a new thread
+/thread list \\- List threads for this chat
+/thread use \\<thread\\_ref\\> \\- Switch active thread
 
 *Memory Commands:*
-/memory review \\- List recent memories
-/memory search \\<query\\> \\- Search memories
+/memory review [limit] \\- List recent memories for active thread
+/memory search \\<query\\> [\\-\\-category \\<name\\>] \\- Search memories
+/memory forget \\<memory\\_ref\\> \\- Forget a memory
 /memory pause \\- Pause auto\\-memory
 /memory resume \\- Resume auto\\-memory
+/memory stats \\- Show memory counts and status
 
 *Scheduler Commands:*
 /jobs \\- List scheduled jobs
@@ -246,9 +278,20 @@ class CommandRouter:
         except Exception:
             status_lines.append("🔌 *Circuit Breakers:* Not available")
         
-        # Current mode
-        current_mode = self.current_modes.get(str(chat_id), "default")
-        status_lines.append(f"🎯 *Current Mode:* {current_mode}")
+        persona_state = self._get_persona_state(chat_id)
+        if persona_state:
+            status_lines.append(f"🧵 *Scope:* {persona_state.get('scope_ref')}")
+            status_lines.append(f"🎭 *Soul:* {persona_state.get('resolved_soul_ref')}")
+            status_lines.append(f"🎯 *Mode:* {persona_state.get('resolved_mode_ref')}")
+            status_lines.append(f"🔒 *Mode Locked:* {persona_state.get('mode_locked')}")
+            status_lines.append(f"🧠 *Memory:* {persona_state.get('memory_enabled')}")
+            file_policy = persona_state.get("file_policy", {})
+            if file_policy:
+                status_lines.append(
+                    f"📁 *File Policy:* read={file_policy.get('max_read_bytes')} write={file_policy.get('max_write_bytes')} ext={','.join(file_policy.get('allowed_extensions', []))}"
+                )
+        else:
+            status_lines.append("🎯 *Mode:* unknown")
         
         # Pause status
         if self._all_paused:
@@ -279,40 +322,125 @@ class CommandRouter:
         Returns:
             str: Mode status or confirmation
         """
-        chat_id_str = str(chat_id)
-        
         if not args:
-            # Show current mode
-            current_mode = self.current_modes.get(chat_id_str, "default")
+            persona = self._get_persona_state(chat_id)
+            if not persona:
+                return "🎯 *Mode*\n\nNo active thread/session\\. Use /thread new \\<title\\> first\\."
             return (
-                f"🎯 *Current Mode:* {current_mode}\n\n"
-                f"Available modes: {', '.join(self.MODES)}\n"
-                f"Use /mode \\<name\\> to switch\\."
+                f"🎯 *Current Mode:* {persona.get('resolved_mode_ref')}\n"
+                f"🔒 Locked: {persona.get('mode_locked')}\n\n"
+                f"Use /mode list, /mode show \\<name\\>, /mode \\<name\\>, /mode lock, /mode unlock"
             )
-        
-        # Switch mode
-        new_mode = args[0].lower()
-        
-        if new_mode not in self.MODES:
+
+        sub = (args[0] or "").strip().lower()
+
+        if sub == "list":
+            modes = get_mode_registry().list_modes()
+            if not modes:
+                return "🎯 *Modes*\n\nNo modes registered\\."
+            lines = ["🎯 *Modes*"]
+            for item in modes:
+                lines.append(f"• `{item.ref}` \\- {item.definition.description}")
+            return "\n".join(lines)
+
+        if sub == "show":
+            if len(args) < 2:
+                return "❌ Usage: /mode show \\<name\\>"
+            target = self._normalize_mode_name(args[1])
+            try:
+                loaded = get_mode_registry().get_mode(target)
+            except KeyError:
+                return f"❌ Unknown mode: `{args[1]}`\\."
+            must = ", ".join(loaded.definition.output_shape.must_include_sections) or "none"
+            forbid = ", ".join(loaded.definition.output_shape.forbid_sections) or "none"
+            avoid = ", ".join(loaded.definition.tool_bias.avoid) or "none"
             return (
-                f"❌ Invalid mode: {new_mode}\n\n"
-                f"Available modes: {', '.join(self.MODES)}"
+                f"🎯 *Mode:* `{loaded.ref}`\n\n"
+                f"{loaded.definition.description}\n"
+                f"Risk: {loaded.definition.risk_posture}\n"
+                f"Avoid tools: {avoid}\n"
+                f"Must include: {must}\n"
+                f"Forbid: {forbid}"
             )
-        
-        old_mode = self.current_modes.get(chat_id_str, "default")
-        self.current_modes[chat_id_str] = new_mode
-        
+
+        if sub == "lock":
+            ok, msg = self._set_mode_lock(chat_id, True)
+            return msg if ok else f"❌ {msg}"
+
+        if sub == "unlock":
+            ok, msg = self._set_mode_lock(chat_id, False)
+            return msg if ok else f"❌ {msg}"
+
+        target_mode = self._normalize_mode_name(sub)
+        ok, message, previous = self._set_mode(chat_id, target_mode)
+        if not ok:
+            return f"❌ {message}"
         logger.info(
-            f"Mode changed from {old_mode} to {new_mode} for chat {chat_id}",
+            "Mode changed",
             extra={
                 "event": "mode_changed",
                 "chat_id": chat_id,
-                "old_mode": old_mode,
-                "new_mode": new_mode,
-            }
+                "old_mode": previous,
+                "new_mode": message,
+            },
         )
-        
-        return f"🎯 Mode changed: {old_mode} → {new_mode}"
+        return f"🎯 Mode changed: {previous} → {message}"
+
+    async def handle_soul(
+        self,
+        chat_id: int,
+        user_id: int,
+        args: List[str],
+    ) -> str:
+        del user_id
+        if not args:
+            persona = self._get_persona_state(chat_id)
+            if not persona:
+                return "🎭 *Soul*\n\nNo active thread/session\\."
+            return (
+                f"🎭 *Current Soul:* {persona.get('resolved_soul_ref')}\n\n"
+                "Use /soul list, /soul show \\<name\\>, /soul use \\<name\\>"
+            )
+
+        sub = (args[0] or "").strip().lower()
+        if sub == "list":
+            souls = get_soul_registry().list_souls()
+            if not souls:
+                return "🎭 *Souls*\n\nNo souls registered\\."
+            lines = ["🎭 *Souls*"]
+            for soul in souls:
+                lines.append(f"• `{soul.ref}` \\- {soul.definition.description}")
+            return "\n".join(lines)
+
+        if sub == "show":
+            if len(args) < 2:
+                return "❌ Usage: /soul show \\<name\\>"
+            target = args[1].strip()
+            try:
+                soul = get_soul_registry().get_soul(target)
+            except KeyError:
+                return f"❌ Unknown soul: `{target}`\\."
+            principles = "\n".join(f"• {item}" for item in soul.definition.principles[:5]) or "• none"
+            tools = ", ".join(soul.definition.constraints.allowed_tools)
+            return (
+                f"🎭 *Soul:* `{soul.ref}`\n\n"
+                f"{soul.definition.description}\n"
+                f"Tone: {soul.definition.style.tone or 'direct'}\n"
+                f"Verbosity: {soul.definition.style.verbosity}\n"
+                f"Allowed tools: {tools}\n"
+                f"Principles:\n{principles}"
+            )
+
+        if sub == "use":
+            if len(args) < 2:
+                return "❌ Usage: /soul use \\<name\\>"
+            target = args[1].strip()
+            ok, message, previous = self._set_soul(chat_id, target)
+            if not ok:
+                return f"❌ {message}"
+            return f"🎭 Soul changed: {previous} → {message}"
+
+        return f"❌ Unknown subcommand: {sub}"
     
     # =========================================================================
     # Thread Commands
@@ -336,53 +464,53 @@ class CommandRouter:
             str: Thread info or confirmation
         """
         chat_id_str = str(chat_id)
-        
+
         if not args:
-            # Show current thread info
-            thread_info = self.current_threads.get(chat_id_str, {})
-            if not thread_info:
-                return (
-                    "🧵 *Thread Info*\n\n"
-                    "No active thread\\. Use /thread new to start one\\."
-                )
-            
-            created_at = thread_info.get("created_at", "unknown")
-            message_count = thread_info.get("message_count", 0)
-            
+            current = self._thread_state.get_current_thread_row(chat_id_str)
+            if not current:
+                return "🧵 *Thread Info*\n\nNo active thread\\. Use /thread new \\<title\\>\\."
             return (
-                f"🧵 *Thread Info*\n\n"
-                f"Created: {created_at}\n"
-                f"Messages: {message_count}"
+                "🧵 *Thread Info*\n\n"
+                f"Ref: `{current.public_id}`\n"
+                f"Title: {current.title}\n"
+                f"Memory: {'enabled' if current.memory_enabled else 'paused'}\n"
+                f"Soul: {current.active_soul or 'default'}\n"
+                f"Mode: {current.active_mode}\n"
+                f"Mode Locked: {current.mode_locked}\n"
+                f"Last Active: {current.last_active_at or current.updated_at}"
             )
-        
+
         subcommand = args[0].lower()
-        
+
         if subcommand == "new":
-            # Start a new thread
-            self.current_threads[chat_id_str] = {
-                "created_at": datetime.utcnow().isoformat(),
-                "message_count": 0,
-            }
-            
-            logger.info(
-                f"New thread started for chat {chat_id}",
-                extra={"event": "thread_new", "chat_id": chat_id}
-            )
-            
-            return "🧵 New thread started\\!"
-        
+            title = " ".join(args[1:]).strip() if len(args) > 1 else ""
+            thread = self._thread_store.create_thread(chat_id_str, title=title or None)
+            logger.info("Thread created", extra={"event": "thread_new", "chat_id": chat_id, "thread_id": thread.public_id})
+            return f"🧵 New thread started: `{thread.public_id}` \\({thread.title}\\)"
+
+        if subcommand == "list":
+            threads = self._thread_store.list_threads(chat_id_str)
+            if not threads:
+                return "🧵 *Threads*\n\nNo threads yet\\. Use /thread new \\<title\\>\\."
+            lines = ["🧵 *Threads*"]
+            for thread in threads[:20]:
+                marker = " \\(active\\)" if thread.is_active else ""
+                lines.append(f"• `{thread.public_id}` {thread.title}{marker}")
+            return "\n".join(lines)
+
+        if subcommand == "use":
+            if len(args) < 2:
+                return "❌ Usage: /thread use \\<thread\\_ref\\>"
+            thread_ref = args[1].strip()
+            try:
+                thread = self._thread_store.set_active_thread(chat_id_str, thread_ref)
+            except ValueError:
+                return f"❌ Thread `{thread_ref}` not found\\."
+            return f"🧵 Active thread: `{thread.public_id}` \\({thread.title}\\)"
+
         if subcommand == "summary":
-            # Thread summary (placeholder)
-            thread_info = self.current_threads.get(chat_id_str, {})
-            if not thread_info:
-                return "❌ No active thread to summarize\\."
-            
-            return (
-                "🧵 *Thread Summary*\n\n"
-                "Thread summarization is not yet implemented\\. "
-                "This feature will be available in a future update\\."
-            )
-        
+            return "🧵 Thread summary is not enabled in v1\\.5\\. Use /thread list or /memory review\\."
+
         return f"❌ Unknown subcommand: {subcommand}"
     
     # =========================================================================
@@ -412,10 +540,9 @@ class CommandRouter:
                 "/memory review \\- List recent memories\n"
                 "/memory search \\<query\\> \\- Search memories\n"
                 "/memory forget \\<id\\> \\- Delete a memory\n"
-                "/memory edit \\<id\\> \\<text\\> \\- Edit a memory\n"
                 "/memory pause \\- Pause auto\\-memory\n"
                 "/memory resume \\- Resume auto\\-memory\n"
-                "/memory policy \\- Show memory policy"
+                "/memory stats \\- Show memory status"
             )
         
         subcommand = args[0].lower()
@@ -435,103 +562,110 @@ class CommandRouter:
                 return "❌ Please provide a memory ID to forget\\."
             return await self._handle_memory_forget(chat_id, memory_id)
         
-        if subcommand == "edit":
-            if len(args) < 3:
-                return "❌ Usage: /memory edit \\<id\\> \\<new text\\>"
-            memory_id = args[1]
-            new_text = " ".join(args[2:])
-            return await self._handle_memory_edit(chat_id, memory_id, new_text)
-        
         if subcommand == "pause":
             return await self._handle_memory_pause(chat_id)
         
         if subcommand == "resume":
             return await self._handle_memory_resume(chat_id)
         
-        if subcommand == "policy":
-            return await self._handle_memory_policy(chat_id)
+        if subcommand == "stats":
+            return await self._handle_memory_stats(chat_id)
         
         return f"❌ Unknown subcommand: {subcommand}"
     
     async def _handle_memory_review(self, chat_id: int, args: List[str]) -> str:
         """Handle memory review subcommand."""
         try:
-            from app.memory.review import get_memory_review
-            review = get_memory_review()
-            
-            # Parse optional limit
             limit = 10
             if args and args[0].isdigit():
                 limit = int(args[0])
-            
-            memories = await review.list_memories(
-                scope=f"chat:{chat_id}",
-                limit=limit
-            )
-            
+
+            active = self._thread_state.get_current_thread_row(str(chat_id))
+            if not active:
+                return "🧠 *Recent Memories*\n\nNo active thread\\. Use /thread new first\\."
+
+            memories = self._memory_store_v15.list_memories(thread_id=active.id, limit=limit, include_deleted=False)
             if not memories:
                 return "🧠 *Recent Memories*\n\nNo memories found\\."
-            
-            lines = ["🧠 *Recent Memories*\n"]
-            for mem in memories[:10]:
-                memory_id = mem.get("id", "?")[:8]
-                content = mem.get("content", "")[:50].replace("_", "\\_").replace("*", "\\*")
-                mem_type = mem.get("memory_type", "unknown")
-                lines.append(f"• `[{memory_id}]` \\({mem_type}\\) {content}")
-            
-            if len(memories) > 10:
-                lines.append(f"\n_\\.\\.\\. and {len(memories) - 10} more_")
-            
+
+            lines = [f"🧠 *Recent Memories* \\(`{active.public_id}`\\)\n"]
+            for mem in memories[: max(1, limit)]:
+                value = (mem.value or "").replace("_", "\\_").replace("*", "\\*")
+                lines.append(f"• `[{mem.public_id}]` \\({mem.category}\\) {mem.key} = {value[:80]}")
             return "\n".join(lines)
         except Exception as e:
             logger.error(f"Memory review error: {e}", extra={"event": "memory_review_error"})
-            error_text = str(e).lower()
-            if "no such table" in error_text and "memory_records" in error_text:
-                return "Recent Memories\n\nNo memories found."
             return f"Error listing memories: {str(e)[:50]}"
     
     async def _handle_memory_search(self, chat_id: int, query: str) -> str:
         """Handle memory search subcommand."""
         try:
-            from app.memory.review import get_memory_review
-            review = get_memory_review()
-            
-            results = await review.search_memories(
-                query=query,
-                scope=f"chat:{chat_id}",
-                limit=5
+            active = self._thread_state.get_current_thread_row(str(chat_id))
+            if not active:
+                return "🧠 *Memory Search*\n\nNo active thread\\."
+
+            category: Optional[str] = None
+            tokens = query.split()
+            if "--category" in tokens:
+                idx = tokens.index("--category")
+                if idx + 1 < len(tokens):
+                    category = tokens[idx + 1].strip().lower()
+                    tokens = tokens[:idx] + tokens[idx + 2 :]
+            query_text = " ".join(tokens).strip()
+            if not query_text:
+                return "❌ Please provide a search query\\."
+
+            results = self._memory_store_v15.search_memories(
+                thread_id=active.id,
+                query=query_text,
+                category=category,
+                limit=10,
             )
-            
             if not results:
-                return f"🧠 *Memory Search*\n\nNo results for: {query}"
-            
-            lines = [f"🧠 *Memory Search*\n\nQuery: {query}\n"]
-            for mem in results[:5]:
-                memory_id = mem.get("id", "?")[:8]
-                content = mem.get("content", "")[:80].replace("_", "\\_").replace("*", "\\*")
-                lines.append(f"• `[{memory_id}]` {content}")
-            
+                return f"🧠 *Memory Search*\n\nNo results for: {query_text}"
+
+            lines = [f"🧠 *Memory Search*\n\nQuery: {query_text}\n"]
+            for mem in results[:10]:
+                value = (mem.value or "").replace("_", "\\_").replace("*", "\\*")
+                lines.append(f"• `[{mem.public_id}]` \\({mem.category}\\) {mem.key} = {value[:90]}")
             return "\n".join(lines)
         except Exception as e:
             logger.error(f"Memory search error: {e}", extra={"event": "memory_search_error"})
-            error_text = str(e).lower()
-            if "no such table" in error_text and "memory_records" in error_text:
-                return f"Memory Search\n\nNo results for: {query}"
             return f"Error searching memories: {str(e)[:50]}"
     
     async def _handle_memory_forget(self, chat_id: int, memory_id: str) -> str:
         """Handle memory forget subcommand."""
         try:
-            from app.memory.review import get_memory_review
-            review = get_memory_review()
-            
-            success = await review.delete_memory(
-                memory_id=memory_id,
-                reason=f"User requested deletion via /memory forget"
-            )
-            
+            active = self._thread_state.get_current_thread_row(str(chat_id))
+            if not active:
+                return "❌ No active thread\\."
+
+            success = self._memory_store_v15.soft_delete_memory(thread_id=active.id, memory_public_id=memory_id)
             if success:
+                self._memory_audit.log(
+                    thread_id=active.id,
+                    agent_id=None,
+                    source_message_id=None,
+                    op="delete",
+                    memory_id=None,
+                    category=None,
+                    key=None,
+                    status="ok",
+                    details={"memory_ref": memory_id},
+                )
                 return f"🗑️ Memory `{memory_id}` has been forgotten\\."
+            self._memory_audit.log(
+                thread_id=active.id,
+                agent_id=None,
+                source_message_id=None,
+                op="delete",
+                memory_id=None,
+                category=None,
+                key=None,
+                status="error",
+                reason_code="ERR_MEM_NOT_FOUND",
+                details={"memory_ref": memory_id},
+            )
             return f"❌ Memory `{memory_id}` not found\\."
         except Exception as e:
             logger.error(f"Memory forget error: {e}", extra={"event": "memory_forget_error"})
@@ -539,30 +673,31 @@ class CommandRouter:
     
     async def _handle_memory_edit(self, chat_id: int, memory_id: str, new_text: str) -> str:
         """Handle memory edit subcommand."""
-        try:
-            from app.memory.review import get_memory_review
-            review = get_memory_review()
-            
-            success = await review.edit_memory(
-                memory_id=memory_id,
-                updates={"content": new_text}
-            )
-            
-            if success:
-                return f"✏️ Memory `{memory_id}` has been updated\\."
-            return f"❌ Memory `{memory_id}` not found\\."
-        except Exception as e:
-            logger.error(f"Memory edit error: {e}", extra={"event": "memory_edit_error"})
-            return f"❌ Error editing memory: {str(e)[:50]}"
+        del chat_id
+        del memory_id
+        del new_text
+        return "❌ /memory edit is not supported in v1\\.5\\. Use /memory forget and restate preference\\."
     
     async def _handle_memory_pause(self, chat_id: int) -> str:
         """Handle memory pause subcommand."""
         try:
-            from app.memory.review import get_memory_review
-            review = get_memory_review()
-            
-            await review.pause_auto_memory()
-            return "⏸️ Auto\\-memory has been paused\\. New memories will not be automatically created\\."
+            active = self._thread_state.get_current_thread_row(str(chat_id))
+            if not active:
+                return "❌ No active thread\\."
+            thread = self._thread_store.set_memory_enabled(str(chat_id), active.public_id, enabled=False)
+            if not thread:
+                return "❌ Failed to pause memory\\."
+            self._memory_audit.log(
+                thread_id=thread.id,
+                agent_id=None,
+                source_message_id=None,
+                op="pause",
+                memory_id=None,
+                category=None,
+                key=None,
+                status="ok",
+            )
+            return f"⏸️ Memory paused for `{thread.public_id}`\\."
         except Exception as e:
             logger.error(f"Memory pause error: {e}", extra={"event": "memory_pause_error"})
             return f"❌ Error pausing memory: {str(e)[:50]}"
@@ -570,35 +705,52 @@ class CommandRouter:
     async def _handle_memory_resume(self, chat_id: int) -> str:
         """Handle memory resume subcommand."""
         try:
-            from app.memory.review import get_memory_review
-            review = get_memory_review()
-            
-            await review.resume_auto_memory()
-            return "▶️ Auto\\-memory has been resumed\\. New memories will be automatically created\\."
+            active = self._thread_state.get_current_thread_row(str(chat_id))
+            if not active:
+                return "❌ No active thread\\."
+            thread = self._thread_store.set_memory_enabled(str(chat_id), active.public_id, enabled=True)
+            if not thread:
+                return "❌ Failed to resume memory\\."
+            self._memory_audit.log(
+                thread_id=thread.id,
+                agent_id=None,
+                source_message_id=None,
+                op="resume",
+                memory_id=None,
+                category=None,
+                key=None,
+                status="ok",
+            )
+            return f"▶️ Memory resumed for `{thread.public_id}`\\."
         except Exception as e:
             logger.error(f"Memory resume error: {e}", extra={"event": "memory_resume_error"})
             return f"❌ Error resuming memory: {str(e)[:50]}"
     
     async def _handle_memory_policy(self, chat_id: int) -> str:
         """Handle memory policy subcommand."""
-        return (
-            "🧠 *Memory Policy*\n\n"
-            "*What is stored:*\n"
-            "• Preferences \\(themes, formats, workflows\\)\n"
-            "• Project context \\(names, goals, tech\\)\n"
-            "• Workflow patterns \\(recurring tasks\\)\n"
-            "• Environment details \\(timezones, paths\\)\n"
-            "• Factual notes \\(API keys locations, etc\\)\n\n"
-            "*What is NOT stored:*\n"
-            "• Transient content \\(temporary values\\)\n"
-            "• Sensitive data \\(passwords, secrets\\)\n"
-            "• Noisy content \\(greetings, small talk\\)\n\n"
-            "*Your controls:*\n"
-            "• /memory review \\- See stored memories\n"
-            "• /memory forget \\- Delete any memory\n"
-            "• /memory pause \\- Stop auto\\-memory\n"
-            "• All deletions are audited"
-        )
+        del chat_id
+        return "🧠 Deterministic memory is enabled\\. Use /memory stats for current thread status\\."
+
+    async def _handle_memory_stats(self, chat_id: int) -> str:
+        """Handle memory stats subcommand."""
+        try:
+            active = self._thread_state.get_current_thread_row(str(chat_id))
+            if not active:
+                return "🧠 *Memory Stats*\n\nNo active thread\\."
+            counts = self._memory_store_v15.stats_by_category(active.id)
+            recent = self._memory_store_v15.list_memories(active.id, limit=1, include_deleted=False)
+            last_write = recent[0].updated_at if recent else "never"
+            parts = [f"🧠 *Memory Stats* \\(`{active.public_id}`\\)", f"Memory Enabled: {active.memory_enabled}", f"Last Write: {last_write}"]
+            if counts:
+                parts.append("By Category:")
+                for category, count in sorted(counts.items()):
+                    parts.append(f"• {category}: {count}")
+            else:
+                parts.append("No stored memories.")
+            return "\n".join(parts)
+        except Exception as e:
+            logger.error(f"Memory stats error: {e}", extra={"event": "memory_stats_error"})
+            return f"❌ Error showing memory stats: {str(e)[:50]}"
     
     # =========================================================================
     # Scheduler Commands (Phase 9)
@@ -1276,14 +1428,230 @@ class CommandRouter:
     # =========================================================================
     # Utility Methods
     # =========================================================================
-    
+
+    @staticmethod
+    def _normalize_mode_name(raw: str) -> str:
+        value = (raw or "").strip()
+        if not value:
+            return value
+        if "@" in value:
+            name, version = value.split("@", 1)
+            name = MODE_ALIASES.get(name.lower(), name.lower())
+            return f"{name}@{version.strip()}"
+        return MODE_ALIASES.get(value.lower(), value.lower())
+
+    def _get_persona_state(self, chat_id: int) -> Optional[Dict[str, Any]]:
+        chat_key = str(chat_id)
+        try:
+            # Hatched control-plane chat: session scope.
+            hatch_state = self._hatch_sessions.get(chat_key)
+            if hatch_state and self.control_plane_context:
+                cp = self.control_plane_context
+                session = cp.session_service.get_session(hatch_state["session_id"])
+                agent = cp.agent_service.get_agent(hatch_state["agent_id"])
+                if session and agent:
+                    mode_ref = session.active_mode or agent.default_mode
+                    soul_ref = session.active_soul or agent.default_soul
+                    persona = resolve_persona(
+                        mode_ref=mode_ref,
+                        soul_ref=soul_ref,
+                        tool_profile=agent.tool_profile,
+                        base_file_policy={
+                            "max_read_bytes": int(getattr(settings, "FILES_MAX_READ_BYTES", 1_048_576)),
+                            "max_write_bytes": int(getattr(settings, "FILES_MAX_WRITE_BYTES", 262_144)),
+                            "allowed_extensions": list(getattr(settings, "FILES_ALLOWED_WRITE_EXTENSIONS", [".md", ".txt", ".json", ".yaml", ".yml", ".log"])),
+                        },
+                    )
+                    return {
+                        "scope_type": "session",
+                        "scope_ref": session.id,
+                        "resolved_mode_ref": persona.resolved_mode_ref,
+                        "resolved_soul_ref": persona.resolved_soul_ref,
+                        "mode_locked": bool(session.mode_locked),
+                        "memory_enabled": True,
+                        "file_policy": persona.effective_file_policy,
+                    }
+
+            # Default queue path: thread scope.
+            thread = self._thread_state.get_current_thread_row(chat_key)
+            if not thread:
+                return None
+            persona = resolve_persona(
+                mode_ref=thread.active_mode,
+                soul_ref=thread.active_soul or getattr(settings, "DEFAULT_SOUL_REF", "teiken_claw_agent@1.5.0"),
+                tool_profile="balanced",
+                base_file_policy={
+                    "max_read_bytes": int(getattr(settings, "FILES_MAX_READ_BYTES", 1_048_576)),
+                    "max_write_bytes": int(getattr(settings, "FILES_MAX_WRITE_BYTES", 262_144)),
+                    "allowed_extensions": list(getattr(settings, "FILES_ALLOWED_WRITE_EXTENSIONS", [".md", ".txt", ".json", ".yaml", ".yml", ".log"])),
+                },
+            )
+            return {
+                "scope_type": "thread",
+                "scope_ref": thread.public_id,
+                "resolved_mode_ref": persona.resolved_mode_ref,
+                "resolved_soul_ref": persona.resolved_soul_ref,
+                "mode_locked": bool(thread.mode_locked),
+                "memory_enabled": bool(thread.memory_enabled),
+                "file_policy": persona.effective_file_policy,
+            }
+        except PersonaResolutionError:
+            return None
+
+    def _set_mode(self, chat_id: int, mode_name_or_ref: str) -> tuple[bool, str, str]:
+        chat_key = str(chat_id)
+        target_mode = self._normalize_mode_name(mode_name_or_ref)
+        try:
+            loaded = get_mode_registry().get_mode(target_mode)
+        except KeyError:
+            return False, f"{ERR_MODE_NOT_FOUND}: Unknown mode `{mode_name_or_ref}`", ""
+
+        hatch_state = self._hatch_sessions.get(chat_key)
+        if hatch_state and self.control_plane_context:
+            cp = self.control_plane_context
+            session = cp.session_service.get_session(hatch_state["session_id"])
+            agent = cp.agent_service.get_agent(hatch_state["agent_id"])
+            if not session or not agent:
+                return False, "No active hatched session", ""
+            if session.mode_locked:
+                return False, f"{ERR_MODE_LOCKED}: mode is locked for this session", session.active_mode
+            previous = session.active_mode or agent.default_mode
+            updated = cp.session_service.set_persona(session.id, active_soul=session.active_soul, active_mode=loaded.ref)
+            if not updated:
+                return False, "Failed to set session mode", previous
+            self._persona_audit.log_event(
+                scope_type="session",
+                session_id=session.id,
+                agent_id=agent.id,
+                op="mode_set",
+                previous_value=previous,
+                new_value=loaded.ref,
+                status="ok",
+            )
+            return True, loaded.ref, previous
+
+        thread = self._thread_state.get_current_thread_row(chat_key) or self._thread_store.get_or_create_active_thread(chat_key)
+        if thread.mode_locked:
+            return False, f"{ERR_MODE_LOCKED}: mode is locked for this thread", thread.active_mode
+        previous = thread.active_mode
+        updated = self._thread_store.set_active_mode(chat_key, thread.public_id, loaded.ref)
+        if not updated:
+            return False, "Failed to set thread mode", previous
+        self._persona_audit.log_event(
+            scope_type="thread",
+            thread_id=thread.id,
+            session_id=None,
+            agent_id=None,
+            op="mode_set",
+            previous_value=previous,
+            new_value=loaded.ref,
+            status="ok",
+        )
+        return True, loaded.ref, previous
+
+    def _set_soul(self, chat_id: int, soul_name_or_ref: str) -> tuple[bool, str, str]:
+        chat_key = str(chat_id)
+        try:
+            loaded = get_soul_registry().get_soul(soul_name_or_ref)
+        except KeyError:
+            return False, f"{ERR_SOUL_NOT_FOUND}: Unknown soul `{soul_name_or_ref}`", ""
+
+        hatch_state = self._hatch_sessions.get(chat_key)
+        if hatch_state and self.control_plane_context:
+            cp = self.control_plane_context
+            session = cp.session_service.get_session(hatch_state["session_id"])
+            agent = cp.agent_service.get_agent(hatch_state["agent_id"])
+            if not session or not agent:
+                return False, "No active hatched session", ""
+            previous = session.active_soul or agent.default_soul
+            updated = cp.session_service.set_persona(session.id, active_soul=loaded.ref, active_mode=session.active_mode)
+            if not updated:
+                return False, "Failed to set session soul", previous
+            self._persona_audit.log_event(
+                scope_type="session",
+                session_id=session.id,
+                agent_id=agent.id,
+                op="soul_set",
+                previous_value=previous,
+                new_value=loaded.ref,
+                status="ok",
+            )
+            return True, loaded.ref, previous
+
+        thread = self._thread_state.get_current_thread_row(chat_key) or self._thread_store.get_or_create_active_thread(chat_key)
+        previous = thread.active_soul or getattr(settings, "DEFAULT_SOUL_REF", "teiken_claw_agent@1.5.0")
+        updated = self._thread_store.set_active_soul(chat_key, thread.public_id, loaded.ref)
+        if not updated:
+            return False, "Failed to set thread soul", previous
+        self._persona_audit.log_event(
+            scope_type="thread",
+            thread_id=thread.id,
+            op="soul_set",
+            previous_value=previous,
+            new_value=loaded.ref,
+            status="ok",
+        )
+        return True, loaded.ref, previous
+
+    def _set_mode_lock(self, chat_id: int, locked: bool) -> tuple[bool, str]:
+        chat_key = str(chat_id)
+        hatch_state = self._hatch_sessions.get(chat_key)
+        if hatch_state and self.control_plane_context:
+            cp = self.control_plane_context
+            session = cp.session_service.get_session(hatch_state["session_id"])
+            agent = cp.agent_service.get_agent(hatch_state["agent_id"])
+            if not session or not agent:
+                return False, "No active hatched session"
+            updated = cp.session_service.set_mode_locked(session.id, locked=locked)
+            if not updated:
+                return False, "Failed to update mode lock"
+            self._persona_audit.log_event(
+                scope_type="session",
+                session_id=session.id,
+                agent_id=agent.id,
+                op="mode_lock" if locked else "mode_unlock",
+                previous_value=str(session.mode_locked),
+                new_value=str(locked),
+                status="ok",
+            )
+            return True, f"Mode {'locked' if locked else 'unlocked'} for session `{session.id}`\\."
+
+        thread = self._thread_state.get_current_thread_row(chat_key) or self._thread_store.get_or_create_active_thread(chat_key)
+        updated = self._thread_store.set_mode_locked(chat_key, thread.public_id, locked=locked)
+        if not updated:
+            return False, "Failed to update mode lock"
+        self._persona_audit.log_event(
+            scope_type="thread",
+            thread_id=thread.id,
+            op="mode_lock" if locked else "mode_unlock",
+            previous_value=str(thread.mode_locked),
+            new_value=str(locked),
+            status="ok",
+        )
+        return True, f"Mode {'locked' if locked else 'unlocked'} for `{thread.public_id}`\\."
+
     def is_paused(self, chat_id: int) -> bool:
         """Check if a chat is paused."""
         return self._all_paused or chat_id in self._paused_chats
     
     def get_current_mode(self, chat_id: int) -> str:
         """Get the current mode for a chat."""
-        return self.current_modes.get(str(chat_id), "default")
+        persona = self._get_persona_state(chat_id)
+        if not persona:
+            return str(getattr(settings, "DEFAULT_MODE_REF", "builder@1.5.0"))
+        return str(persona.get("resolved_mode_ref") or getattr(settings, "DEFAULT_MODE_REF", "builder@1.5.0"))
+
+    def get_chat_persona_payload(self, chat_id: int) -> Dict[str, str]:
+        persona = self._get_persona_state(chat_id)
+        if not persona:
+            return {
+                "mode": str(getattr(settings, "DEFAULT_MODE_REF", "builder@1.5.0")),
+                "soul_ref": str(getattr(settings, "DEFAULT_SOUL_REF", "teiken_claw_agent@1.5.0")),
+            }
+        return {
+            "mode": str(persona.get("resolved_mode_ref") or getattr(settings, "DEFAULT_MODE_REF", "builder@1.5.0")),
+            "soul_ref": str(persona.get("resolved_soul_ref") or getattr(settings, "DEFAULT_SOUL_REF", "teiken_claw_agent@1.5.0")),
+        }
 
     # =========================================================================
     # Hatch Commands (Phase 19)

@@ -542,5 +542,25 @@ class TestMemoryCommands:
         assert hasattr(router, '_handle_memory_policy')
 
 
+class TestMemoryV15Behavior:
+    """Behavioral tests for deterministic v1.5 memory flow."""
+
+    def test_rules_map_default_write_cap(self):
+        from app.memory.extraction_rules import MemoryExtractionRules
+
+        rules = MemoryExtractionRules()
+        candidate = rules.extract_candidate("from now on, default write cap should be 256KB")
+        assert candidate is not None
+        assert candidate.category == "project_setting"
+        assert candidate.key == "write_cap"
+
+    def test_rules_skip_ephemeral_statement(self):
+        from app.memory.extraction_rules import MemoryExtractionRules
+
+        rules = MemoryExtractionRules()
+        assert rules.should_consider_memory("today I feel tired") is False
+        assert rules.extract_candidate("today I feel tired") is None
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

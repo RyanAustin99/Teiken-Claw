@@ -14,6 +14,8 @@ from app.soul.models import (
     GoalsConfig,
     ModeType
 )
+from app.modes.registry import get_mode_registry
+from app.souls.registry import get_soul_registry
 
 logger = logging.getLogger(__name__)
 
@@ -45,8 +47,64 @@ class SoulLoader:
             Complete SoulConfig with all loaded components
         """
         logger.info("Loading complete soul configuration...")
-        
-        # Create base config
+
+        # Bridge-first path: load from versioned soul/mode registries.
+        # Keep legacy behavior for custom fixture paths that include /soul.
+        can_use_bridge = not ((self.base_path / "soul").exists() and self.base_path != Path.cwd())
+        try:
+            if not can_use_bridge:
+                raise RuntimeError("legacy_local_soul_path_present")
+            soul_loaded = get_soul_registry().get_default_soul()
+            get_soul_registry().log_legacy_deprecation_once()
+            mode_registry = get_mode_registry()
+            mode_map: Dict[str, ModeConfig] = {}
+            for loaded in mode_registry.list_modes():
+                mode_map[loaded.definition.name] = ModeConfig(
+                    name=loaded.definition.name,
+                    description=loaded.definition.description,
+                    verbosity="normal",
+                    output_format="markdown",
+                    tool_proactiveness="balanced",
+                    response_style="professional",
+                    include_reasoning=True,
+                    include_alternatives=False,
+                    max_iterations=max(1, loaded.definition.tool_bias.max_tool_turns or 10),
+                    timeout_seconds=300,
+                    prompt_template=loaded.definition.overlay_prompt,
+                )
+
+            default_mode_name = "default"
+
+            self._soul_config = SoulConfig(
+                name=soul_loaded.definition.name,
+                version=soul_loaded.definition.version,
+                core_file="souls/teiken_claw_agent.yaml",
+                style_file="souls/teiken_claw_agent.yaml",
+                goals_file="souls/teiken_claw_agent.yaml",
+                guardrails_file="souls/teiken_claw_agent.yaml",
+                default_mode=ModeType(default_mode_name) if default_mode_name in {item.value for item in ModeType} else ModeType.DEFAULT,
+                modes_directory="modes",
+                core=soul_loaded.definition.system_prompt,
+                style=f"Tone: {soul_loaded.definition.style.tone or 'direct'}\nVerbosity: {soul_loaded.definition.style.verbosity}",
+                guardrails=GuardrailsConfig(),
+                goals=GoalsConfig(primary_goals=soul_loaded.definition.principles),
+                modes=mode_map,
+            )
+            logger.info(
+                "Soul loaded from versioned registries: %s v%s",
+                self._soul_config.name,
+                self._soul_config.version,
+                extra={"event": "soul_registry_loaded"},
+            )
+            return self._soul_config
+        except Exception as exc:
+            logger.warning(
+                "Falling back to legacy soul loader path: %s",
+                exc,
+                extra={"event": "soul_registry_fallback"},
+            )
+
+        # Legacy fallback path.
         self._soul_config = SoulConfig(
             name="Teiken Claw",
             version="1.0.0",
@@ -57,16 +115,11 @@ class SoulLoader:
             default_mode=ModeType.DEFAULT,
             modes_directory="soul/modes"
         )
-        
-        # Load components
         self._soul_config.core = self.load_core()
         self._soul_config.style = self.load_style()
         self._soul_config.guardrails = self.load_guardrails()
         self._soul_config.goals = self.load_goals()
-        
-        # Load all modes
         self._soul_config.modes = self.load_all_modes()
-        
         logger.info(f"Soul loaded successfully: {self._soul_config.name} v{self._soul_config.version}")
         return self._soul_config
     

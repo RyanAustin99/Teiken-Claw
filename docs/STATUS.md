@@ -1,7 +1,7 @@
 # Project Status
 
-## Current Version: 1.20.5
-## Last Updated: 2026-02-27
+## Current Version: 1.22.0
+## Last Updated: 2026-03-01
 ## Current Track: Terminal-First Control Plane
 
 ---

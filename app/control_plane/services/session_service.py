@@ -30,6 +30,12 @@ class SessionService:
     def update_onboarding(self, session_id: str, status: OnboardingStatus, step: int) -> Optional[SessionRecord]:
         return self.repo.update_onboarding(session_id=session_id, status=status, step=step)
 
+    def set_persona(self, session_id: str, *, active_soul: Optional[str], active_mode: Optional[str]) -> Optional[SessionRecord]:
+        return self.repo.set_persona(session_id=session_id, active_soul=active_soul, active_mode=active_mode)
+
+    def set_mode_locked(self, session_id: str, *, locked: bool) -> Optional[SessionRecord]:
+        return self.repo.set_mode_locked(session_id=session_id, locked=locked)
+
     def delete_session(self, session_id: str) -> bool:
         return self.repo.delete_session(session_id=session_id)
 

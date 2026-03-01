@@ -61,7 +61,9 @@ class AgentRepository:
                     onboarding_state TEXT NOT NULL DEFAULT 'NEW',
                     profile_json TEXT,
                     boot_directives TEXT,
-                    degraded_reason TEXT
+                    degraded_reason TEXT,
+                    default_soul TEXT NOT NULL DEFAULT 'teiken_claw_agent@1.5.0',
+                    default_mode TEXT NOT NULL DEFAULT 'builder@1.5.0'
                 )
                 """
             )
@@ -83,6 +85,8 @@ class AgentRepository:
             "profile_json": "TEXT",
             "boot_directives": "TEXT",
             "degraded_reason": "TEXT",
+            "default_soul": "TEXT NOT NULL DEFAULT 'teiken_claw_agent@1.5.0'",
+            "default_mode": "TEXT NOT NULL DEFAULT 'builder@1.5.0'",
         }
         for column, definition in required.items():
             if column in existing:
@@ -135,6 +139,8 @@ class AgentRepository:
             profile_json=AgentRepository._decode_profile_json(row["profile_json"]) if "profile_json" in row.keys() else None,
             boot_directives=row["boot_directives"] if "boot_directives" in row.keys() else None,
             degraded_reason=row["degraded_reason"] if "degraded_reason" in row.keys() else None,
+            default_soul=row["default_soul"] if "default_soul" in row.keys() and row["default_soul"] else "teiken_claw_agent@1.5.0",
+            default_mode=row["default_mode"] if "default_mode" in row.keys() and row["default_mode"] else "builder@1.5.0",
         )
 
     def create(
@@ -149,6 +155,8 @@ class AgentRepository:
         max_queue_depth: Optional[int] = None,
         tool_profile_version: Optional[str] = None,
         prompt_template_version: str = "1.0.0",
+        default_soul: str = "teiken_claw_agent@1.5.0",
+        default_mode: str = "builder@1.5.0",
     ) -> AgentRecord:
         agent_id = str(uuid4())
         now = _utcnow()
@@ -162,7 +170,8 @@ class AgentRepository:
                     agent_profile_user_name, agent_profile_agent_name, agent_profile_purpose,
                     onboarding_complete, onboarding_updated_at, prompt_template_version,
                     is_fresh, onboarding_state, profile_json, boot_directives, degraded_reason
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    , default_soul, default_mode
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     agent_id,
@@ -192,6 +201,8 @@ class AgentRepository:
                     None,
                     None,
                     None,
+                    default_soul,
+                    default_mode,
                 ),
             )
             conn.commit()
@@ -245,6 +256,8 @@ class AgentRepository:
             "profile_json",
             "boot_directives",
             "degraded_reason",
+            "default_soul",
+            "default_mode",
         }
         keys = [key for key in patch.keys() if key in allowed]
         if not keys:

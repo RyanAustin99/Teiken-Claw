@@ -5,6 +5,7 @@ from typing import Optional, Dict, Any
 import logging
 
 from app.soul.models import SoulConfig, ModeConfig, ModeType
+from app.persona.resolve import MODE_ALIASES
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +145,13 @@ class SoulPolicyManager:
         Returns:
             Dictionary of policy settings for the mode
         """
-        mode_policies = self._mode_policies.get(mode, {})
+        normalized = (mode or "").strip().lower()
+        # Preserve legacy mode behavior when an explicit legacy policy exists.
+        if normalized in self._mode_policies:
+            lookup = normalized
+        else:
+            lookup = MODE_ALIASES.get(normalized, normalized)
+        mode_policies = self._mode_policies.get(lookup, {})
         # Merge with defaults
         return {**self._default_policies, **mode_policies}
     

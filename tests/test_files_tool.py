@@ -143,7 +143,8 @@ class TestFilesTool:
         
         result = await files_tool.execute(action="read_file", path="test.exe")
         assert not result.ok
-        assert "BINARY_FILE" in result.error_code
+        assert result.error_code == "ERR_BINARY_NOT_SUPPORTED"
+        assert result.metadata["error"]["legacy_code"] == "BINARY_FILE"
     
     @pytest.mark.asyncio
     async def test_write_file_success(self, files_tool, temp_workspace):
@@ -190,7 +191,8 @@ class TestFilesTool:
             content="binary content"
         )
         assert not result.ok
-        assert "BINARY_FILE" in result.error_code
+        assert result.error_code == "ERR_EXT_NOT_ALLOWED"
+        assert result.metadata["error"]["legacy_code"] == "BINARY_FILE"
     
     @pytest.mark.asyncio
     async def test_search_files_by_name(self, files_tool, temp_workspace):

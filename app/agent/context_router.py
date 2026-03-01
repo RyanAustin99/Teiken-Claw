@@ -1,196 +1,147 @@
 """
-Context router for topic detection and thread management.
-
-This module provides:
-- Topic similarity detection using semantic analysis
-- Thread creation logic based on topic changes
-- Command detection for thread management
-- Inactivity-based thread switching
+Deterministic thread context router for Memory v1.5.
 """
 
-from datetime import datetime, timedelta
+from __future__ import annotations
+
+import asyncio
 import re
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from app.memory.models import SessionMessage
-from app.memory.store import MemoryStore
+from app.config.settings import settings
 from app.memory.thread_state import ThreadState
 
 
+STOP_WORDS = {"the", "and", "is", "in", "it", "to", "of", "a", "for", "with", "that", "this"}
+
+
+@dataclass
+class RouteOutcome:
+    thread_id: str
+    reason: str
+    created_new_thread: bool
+    proposal: Optional[str] = None
+
+
 class ContextRouter:
-    """Context router for managing conversation topics and threads."""
+    """Route messages to deterministic per-chat threads."""
 
-    def __init__(self):
-        self.store = MemoryStore()
-        self.thread_state = ThreadState()
-        self._similarity_threshold = 0.7  # Default similarity threshold
-        self._inactivity_timeout = 30  # Minutes
-        self._max_thread_messages = 100
+    def __init__(self, thread_state: Optional[ThreadState] = None) -> None:
+        self.thread_state = thread_state or ThreadState()
+        self._similarity_threshold = float(getattr(settings, "MEMORY_ROUTER_SIMILARITY_THRESHOLD", 0.35))
+        self._propose_only = bool(getattr(settings, "MEMORY_THREAD_PROPOSE_ONLY", True))
+        self._locks: Dict[str, asyncio.Lock] = {}
 
-    # =========================================================================
-    # Thread Management
-    # =========================================================================
+    def _chat_lock(self, chat_id: str) -> asyncio.Lock:
+        chat_key = str(chat_id)
+        lock = self._locks.get(chat_key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[chat_key] = lock
+        return lock
+
+    async def route_message(
+        self,
+        chat_id: str,
+        message: str,
+        explicit_thread_id: Optional[str] = None,
+    ) -> RouteOutcome:
+        chat_id = str(chat_id)
+        text = (message or "").strip()
+        async with self._chat_lock(chat_id):
+            if explicit_thread_id:
+                thread = self.thread_state.resolve_thread(chat_id, explicit_thread_id=explicit_thread_id)
+                return RouteOutcome(thread_id=thread.public_id, reason="explicit_thread_use", created_new_thread=False)
+
+            switch_title = self._extract_topic_switch_title(text)
+            if switch_title is not None:
+                thread_ref = self.thread_state.create_new_thread(chat_id, metadata={"title": switch_title})
+                return RouteOutcome(thread_id=thread_ref, reason="explicit_topic_switch", created_new_thread=True)
+
+            current_thread = self.thread_state.resolve_thread(chat_id)
+            context = self.thread_state.get_thread_context(current_thread.public_id, max_messages=20)
+            score = self.get_topic_similarity(context, text)
+            if score < self._similarity_threshold and self._propose_only:
+                return RouteOutcome(
+                    thread_id=current_thread.public_id,
+                    reason="similarity_low_propose_only",
+                    created_new_thread=False,
+                    proposal="This looks like a new topic. Use /thread new <title> to split it.",
+                )
+
+            return RouteOutcome(thread_id=current_thread.public_id, reason="active_thread", created_new_thread=False)
 
     def should_create_new_thread(
         self,
-        current_thread_id: Optional[int],
+        current_thread_id: Optional[str],
         new_message: str,
-        session_id: int,
+        session_id: str,
     ) -> bool:
-        """Determine if a new thread should be created."""
-        if self._is_thread_command(new_message):
-            return True
-
-        if self._is_mode_change(new_message):
-            return True
-
-        if self._is_inactive_timeout(session_id):
-            return True
-
-        if current_thread_id:
-            thread_context = self.thread_state.get_thread_context(current_thread_id)
-            if thread_context:
-                similarity = self.get_topic_similarity(thread_context, new_message)
-                if similarity < self._similarity_threshold:
-                    return True
-
-        return False
+        del current_thread_id
+        del session_id
+        return self._extract_topic_switch_title(new_message or "") is not None
 
     def create_new_thread_if_needed(
         self,
-        session_id: int,
-        current_thread_id: Optional[int],
+        session_id: str,
+        current_thread_id: Optional[str],
         new_message: str,
-    ) -> Optional[int]:
-        """Create a new thread if needed based on context."""
-        if self.should_create_new_thread(current_thread_id, new_message, session_id):
-            new_thread_id = self.thread_state.create_new_thread(session_id)
-            self.store.create_event(
-                event_type="thread_created",
-                event_data={
-                    "session_id": session_id,
-                    "old_thread_id": current_thread_id,
-                    "new_thread_id": new_thread_id,
-                    "reason": "topic_change",
-                    "timestamp": datetime.now().isoformat(),
-                },
-            )
-            return new_thread_id
-        return current_thread_id
+    ) -> Optional[str]:
+        del current_thread_id
+        title = self._extract_topic_switch_title(new_message or "")
+        if title is None:
+            return self.thread_state.get_current_thread(session_id)
+        return self.thread_state.create_new_thread(session_id, metadata={"title": title})
 
-    def get_thread_context(self, thread_id: int, max_messages: int = 20) -> Dict[str, Any]:
-        """Get context for a thread."""
-        return self.thread_state.get_thread_context(thread_id, max_messages)
-
-    # =========================================================================
-    # Topic Similarity
-    # =========================================================================
+    def get_thread_context(self, thread_id: str, max_messages: int = 20) -> Dict[str, Any]:
+        return self.thread_state.get_thread_context(thread_id, max_messages=max_messages)
 
     def get_topic_similarity(self, thread_context: Dict[str, Any], new_message: str) -> float:
-        """Calculate topic similarity between thread context and new message."""
-        thread_keywords = self._extract_keywords(thread_context)
+        context_keywords = self._extract_keywords(thread_context)
         message_keywords = self._extract_keywords_from_text(new_message)
-
-        if not thread_keywords or not message_keywords:
+        if not context_keywords or not message_keywords:
             return 0.0
+        common = set(context_keywords) & set(message_keywords)
+        return len(common) / max(len(context_keywords), len(message_keywords))
 
-        common_keywords = set(thread_keywords) & set(message_keywords)
-        similarity = len(common_keywords) / max(len(thread_keywords), len(message_keywords))
-        return similarity
-
-    def _extract_keywords(self, context: Dict[str, Any]) -> List[str]:
-        """Extract keywords from thread context."""
-        keywords: List[str] = []
-
-        for message in context.get("messages", []):
-            keywords.extend(self._extract_keywords_from_text(message["content"]))
-
-        if context.get("summary"):
-            keywords.extend(self._extract_keywords_from_text(context["summary"]))
-
-        return list(set(keywords))
+    def _extract_keywords(self, thread_context: Dict[str, Any]) -> List[str]:
+        tokens: List[str] = []
+        title = thread_context.get("title")
+        if isinstance(title, str) and title.strip():
+            tokens.extend(self._extract_keywords_from_text(title))
+        for message in thread_context.get("messages", []):
+            tokens.extend(self._extract_keywords_from_text(message.get("content", "")))
+        # keep uniqueness with stable order
+        deduped: List[str] = []
+        for token in tokens:
+            if token not in deduped:
+                deduped.append(token)
+        return deduped
 
     def _extract_keywords_from_text(self, text: str) -> List[str]:
-        """Extract keywords from text."""
-        words = re.findall(r"\b\w+\b", text.lower())
-        common_words = {"the", "and", "is", "in", "it", "to", "of", "a", "with", "for"}
-        return [word for word in words if word not in common_words and len(word) > 3]
+        words = re.findall(r"\b[a-zA-Z0-9_]+\b", (text or "").lower())
+        return [word for word in words if len(word) > 2 and word not in STOP_WORDS]
 
-    # =========================================================================
-    # Command Detection
-    # =========================================================================
-
-    def _is_thread_command(self, message: str) -> bool:
-        """Check if message is a thread command."""
-        thread_commands = [
-            r"^/thread new$",
-            r"^/thread create$",
-            r"^/new thread$",
-            r"^/create thread$",
-            r"^/thread switch$",
-            r"^/switch thread$",
-            r"^/thread change$",
-            r"^/change thread$",
-        ]
-
-        for command in thread_commands:
-            if re.match(command, message.strip(), re.IGNORECASE):
-                return True
-        return False
-
-    def _is_mode_change(self, message: str) -> bool:
-        """Check if message indicates a mode change."""
-        mode_change_patterns = [r"^/mode\s+", r"^mode\s+", r"^switch to\s+", r"^change to\s+"]
-        for pattern in mode_change_patterns:
-            if re.match(pattern, message.strip(), re.IGNORECASE):
-                return True
-        return False
-
-    # =========================================================================
-    # Inactivity Detection
-    # =========================================================================
-
-    def _is_inactive_timeout(self, session_id: int) -> bool:
-        """Check if session has been inactive for too long."""
-        current_thread_id = self.thread_state.get_current_thread(session_id)
-        if not current_thread_id:
-            return False
-
-        last_message = (
-            self.store._session.query(SessionMessage)
-            .filter(SessionMessage.thread_id == current_thread_id)
-            .order_by(SessionMessage.created_at.desc())
-            .first()
-        )
-
-        if last_message:
-            inactivity_time = datetime.now() - last_message.created_at
-            return inactivity_time > timedelta(minutes=self._inactivity_timeout)
-
-        return False
-
-    # =========================================================================
-    # Configuration
-    # =========================================================================
+    def _extract_topic_switch_title(self, text: str) -> Optional[str]:
+        stripped = (text or "").strip()
+        lower = stripped.lower()
+        if lower.startswith("new topic:"):
+            value = stripped[len("new topic:"):].strip()
+            return value or "New Topic"
+        if lower.startswith("topic:"):
+            value = stripped[len("topic:"):].strip()
+            return value or "New Topic"
+        return None
 
     def set_similarity_threshold(self, threshold: float) -> None:
-        """Set the similarity threshold."""
-        self._similarity_threshold = max(0.0, min(1.0, threshold))
-
-    def set_inactivity_timeout(self, minutes: int) -> None:
-        """Set the inactivity timeout."""
-        self._inactivity_timeout = max(1, minutes)
-
-    def set_max_thread_messages(self, max_messages: int) -> None:
-        """Set the maximum messages per thread."""
-        self._max_thread_messages = max(10, max_messages)
+        self._similarity_threshold = max(0.0, min(1.0, float(threshold)))
 
 
 _context_router: Optional[ContextRouter] = None
 
 
 def get_context_router() -> ContextRouter:
-    """Get or create the global context router instance."""
     global _context_router
     if _context_router is None:
         _context_router = ContextRouter()
@@ -198,9 +149,8 @@ def get_context_router() -> ContextRouter:
 
 
 def set_context_router(router: ContextRouter) -> None:
-    """Set the global context router instance."""
     global _context_router
     _context_router = router
 
 
-__all__ = ["ContextRouter", "get_context_router", "set_context_router"]
+__all__ = ["ContextRouter", "RouteOutcome", "get_context_router", "set_context_router"]

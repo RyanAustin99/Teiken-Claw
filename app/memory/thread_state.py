@@ -1,93 +1,94 @@
 """
-Thread state management for Teiken Claw.
-
-This module provides thread tracking and session management functionality,
-including:
-- Current thread tracking per session
-- Thread history management
-- Session statistics
-- Thread creation and switching
+Thread state manager for Memory v1.5.
 """
 
-from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from __future__ import annotations
 
-from app.memory.models import MemoryRecord, Session, SessionMessage, Thread
-from app.memory.store import MemoryStore
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional, Union
+
+from sqlalchemy import func
+
+from app.memory.message_store import MessageStore
+from app.memory.models import Session, SessionMessage, Thread
+from app.memory.thread_store import ThreadStore
 
 
 class ThreadState:
-    """Thread state management for tracking conversation threads."""
+    """Authoritative helper for chat thread selection."""
 
-    def __init__(self, session=None, store: Optional[MemoryStore] = None):
-        self.store = store or MemoryStore(session=session)
-        self._thread_cache: Dict[int, int] = {}
-        self._session_cache: Dict[int, Dict[str, Any]] = {}
+    def __init__(self, session=None):
+        self.thread_store = ThreadStore(session=session)
+        self.message_store = MessageStore(session=session)
+        self._session = self.thread_store._session
 
-    # =========================================================================
-    # Session Management
-    # =========================================================================
+    def _chat_scope(self, session_or_chat_id: Union[str, int]) -> str:
+        return str(session_or_chat_id)
 
-    def get_current_thread(self, session_id: int) -> Optional[int]:
-        """Get the current thread ID for a session."""
-        if session_id in self._thread_cache:
-            return self._thread_cache[session_id]
+    def resolve_thread(self, chat_id: Union[str, int], explicit_thread_id: Optional[str] = None) -> Thread:
+        return self.thread_store.resolve_thread(self._chat_scope(chat_id), explicit_thread_id)
 
-        session = self.store.get_session(session_id)
-        if session and session.metadata_:
-            current_thread_id = session.metadata_.get("current_thread_id")
-            if current_thread_id:
-                self._thread_cache[session_id] = current_thread_id
-                return current_thread_id
-        return None
+    def get_current_thread(self, session_id: Union[str, int]) -> Optional[str]:
+        chat_id = self._chat_scope(session_id)
+        thread = (
+            self._session.query(Thread)
+            .filter(Thread.chat_id == chat_id, Thread.is_active.is_(True))
+            .order_by(Thread.last_active_at.desc(), Thread.id.desc())
+            .first()
+        )
+        return thread.public_id if thread else None
 
-    def set_current_thread(self, session_id: int, thread_id: int) -> bool:
-        """Set the current thread for a session."""
-        session = self.store.get_session(session_id)
-        if not session:
-            return False
-
-        metadata = dict(session.metadata_ or {})
-        metadata["current_thread_id"] = thread_id
-        self.store.update_session(session_id, {"metadata_": metadata})
-        self._thread_cache[session_id] = thread_id
-        return True
-
-    def create_new_thread(self, session_id: int, metadata: Optional[Dict] = None) -> int:
-        """Create a new thread and set it as current."""
-        thread = self.store.create_thread(session_id, metadata)
-        self.set_current_thread(session_id, thread.id)
-        return thread.id
-
-    def get_thread_history(self, session_id: int) -> List[Dict]:
-        """Get thread history for a session."""
-        threads = (
-            self.store._session.query(Thread)
-            .filter(Thread.session_id == session_id)
-            .order_by(Thread.created_at.desc())
-            .all()
+    def get_current_thread_row(self, session_id: Union[str, int]) -> Optional[Thread]:
+        chat_id = self._chat_scope(session_id)
+        return (
+            self._session.query(Thread)
+            .filter(Thread.chat_id == chat_id, Thread.is_active.is_(True))
+            .order_by(Thread.last_active_at.desc(), Thread.id.desc())
+            .first()
         )
 
+    def set_current_thread(self, session_id: Union[str, int], thread_id: str) -> bool:
+        try:
+            self.thread_store.set_active_thread(self._chat_scope(session_id), thread_id)
+            return True
+        except ValueError:
+            return False
+
+    def create_new_thread(self, session_id: Union[str, int], metadata: Optional[Dict] = None) -> str:
+        title = None
+        if metadata:
+            title = metadata.get("title")
+        thread = self.thread_store.create_thread(self._chat_scope(session_id), title=title)
+        return thread.public_id
+
+    def get_thread_history(self, session_id: Union[str, int]) -> List[Dict]:
+        chat_id = self._chat_scope(session_id)
+        threads = self.thread_store.list_threads(chat_id)
         history: List[Dict[str, Any]] = []
         for thread in threads:
-            message_count = (
-                self.store._session.query(SessionMessage)
+            count = (
+                self._session.query(func.count(SessionMessage.id))
                 .filter(SessionMessage.thread_id == thread.id)
-                .count()
-            )
+                .scalar()
+            ) or 0
             history.append(
                 {
-                    "thread_id": thread.id,
+                    "thread_id": thread.public_id,
+                    "title": thread.title,
                     "created_at": thread.created_at,
-                    "summary": thread.summary,
-                    "message_count": message_count,
+                    "last_active_at": thread.last_active_at,
+                    "is_active": thread.is_active,
+                    "message_count": int(count),
+                    "memory_enabled": thread.memory_enabled,
+                    "active_mode": thread.active_mode,
+                    "active_soul": thread.active_soul,
+                    "mode_locked": thread.mode_locked,
                 }
             )
         return history
 
     def get_all_sessions(self) -> List[Dict]:
-        """Get all sessions."""
-        sessions = self.store._session.query(Session).all()
+        sessions = self._session.query(Session).all()
         return [
             {
                 "session_id": session.id,
@@ -95,140 +96,123 @@ class ThreadState:
                 "mode": session.mode,
                 "created_at": session.created_at,
                 "updated_at": session.updated_at,
-                "current_thread_id": self.get_current_thread(session.id),
+                "current_thread_id": self.get_current_thread(session.chat_id),
             }
             for session in sessions
         ]
 
-    def get_session_stats(self, session_id: int) -> Dict:
-        """Get statistics for a session."""
-        session = self.store.get_session(session_id)
-        if not session:
-            return {}
-
-        thread_count = (
-            self.store._session.query(Thread)
-            .filter(Thread.session_id == session_id)
-            .count()
-        )
+    def get_session_stats(self, session_id: Union[str, int]) -> Dict:
+        chat_id = self._chat_scope(session_id)
+        threads = self.thread_store.list_threads(chat_id)
         message_count = (
-            self.store._session.query(SessionMessage)
-            .join(Thread)
-            .filter(Thread.session_id == session_id)
-            .count()
-        )
-        memory_count = (
-            self.store._session.query(MemoryRecord)
-            .filter(MemoryRecord.scope == "session")
-            .count()
-        )
-
+            self._session.query(func.count(SessionMessage.id))
+            .join(Thread, Thread.id == SessionMessage.thread_id)
+            .filter(Thread.chat_id == chat_id)
+            .scalar()
+        ) or 0
         return {
-            "session_id": session.id,
-            "chat_id": session.chat_id,
-            "mode": session.mode,
-            "created_at": session.created_at,
-            "updated_at": session.updated_at,
-            "thread_count": thread_count,
-            "message_count": message_count,
-            "memory_count": memory_count,
-            "current_thread_id": self.get_current_thread(session.id),
+            "chat_id": chat_id,
+            "thread_count": len(threads),
+            "message_count": int(message_count),
+            "current_thread_id": self.get_current_thread(chat_id),
         }
 
-    # =========================================================================
-    # Thread Management
-    # =========================================================================
+    def switch_thread(self, session_id: Union[str, int], thread_id: str) -> bool:
+        return self.set_current_thread(session_id, thread_id)
 
-    def switch_thread(self, session_id: int, thread_id: int) -> bool:
-        """Switch to an existing thread."""
-        thread = self.store.get_thread(thread_id)
-        if thread and thread.session_id == session_id:
-            return self.set_current_thread(session_id, thread_id)
-        return False
+    def close_thread(self, session_id: Union[str, int], thread_id: str) -> bool:
+        chat_id = self._chat_scope(session_id)
+        target = (
+            self._session.query(Thread)
+            .filter(Thread.chat_id == chat_id, Thread.public_id == thread_id)
+            .first()
+        )
+        if not target:
+            return False
+        target.is_active = False
+        target.updated_at = datetime.utcnow()
+        self._session.commit()
+        return True
 
-    def close_thread(self, session_id: int, thread_id: int) -> bool:
-        """Close a thread (mark as completed)."""
-        thread = self.store.get_thread(thread_id)
-        if thread and thread.session_id == session_id:
-            self.store.update_thread(thread_id, {"summary": "Thread completed"})
-            return True
-        return False
-
-    def get_thread_context(self, thread_id: int, max_messages: int = 20) -> Dict:
-        """Get context for a thread."""
-        thread = self.store.get_thread(thread_id)
+    def get_thread_context(self, thread_id: Union[str, int], max_messages: int = 20) -> Dict:
+        if isinstance(thread_id, int):
+            thread = self._session.query(Thread).filter(Thread.id == thread_id).first()
+        else:
+            thread = self._session.query(Thread).filter(Thread.public_id == str(thread_id)).first()
         if not thread:
             return {}
 
-        messages = self.store.get_messages_by_thread(thread_id, limit=max_messages)
-        formatted_messages = [
-            {
-                "role": message.role,
-                "content": message.content,
-                "created_at": message.created_at,
-            }
-            for message in messages
-        ]
-
+        messages = self.message_store.get_recent_messages(thread.id, max_messages)
         return {
-            "thread_id": thread.id,
-            "session_id": thread.session_id,
+            "thread_id": thread.public_id,
+            "thread_pk": thread.id,
+            "chat_id": thread.chat_id,
+            "title": thread.title,
             "created_at": thread.created_at,
-            "summary": thread.summary,
-            "messages": formatted_messages,
+            "last_active_at": thread.last_active_at,
+            "memory_enabled": thread.memory_enabled,
+            "active_mode": thread.active_mode,
+            "active_soul": thread.active_soul,
+            "mode_locked": thread.mode_locked,
+            "messages": [
+                {"role": message.role, "content": message.content, "created_at": message.created_at}
+                for message in messages
+            ],
             "message_count": len(messages),
         }
 
-    # =========================================================================
-    # Cache Management
-    # =========================================================================
+    def set_active_mode(self, session_id: Union[str, int], mode_ref: str) -> bool:
+        chat_id = self._chat_scope(session_id)
+        current = self.get_current_thread_row(chat_id)
+        if not current:
+            return False
+        updated = self.thread_store.set_active_mode(chat_id, current.public_id, mode_ref)
+        return updated is not None
 
-    def clear_cache(self) -> None:
-        self._thread_cache.clear()
-        self._session_cache.clear()
+    def set_active_soul(self, session_id: Union[str, int], soul_ref: Optional[str]) -> bool:
+        chat_id = self._chat_scope(session_id)
+        current = self.get_current_thread_row(chat_id)
+        if not current:
+            return False
+        updated = self.thread_store.set_active_soul(chat_id, current.public_id, soul_ref)
+        return updated is not None
 
-    def invalidate_session_cache(self, session_id: int) -> None:
-        self._thread_cache.pop(session_id, None)
-        self._session_cache.pop(session_id, None)
+    def set_mode_locked(self, session_id: Union[str, int], locked: bool) -> bool:
+        chat_id = self._chat_scope(session_id)
+        current = self.get_current_thread_row(chat_id)
+        if not current:
+            return False
+        updated = self.thread_store.set_mode_locked(chat_id, current.public_id, locked)
+        return updated is not None
 
-    # =========================================================================
-    # Utility Methods
-    # =========================================================================
-
-    def is_thread_active(self, session_id: int, thread_id: int) -> bool:
+    def is_thread_active(self, session_id: Union[str, int], thread_id: str) -> bool:
         return self.get_current_thread(session_id) == thread_id
 
-    def get_inactive_threads(self, session_id: int, inactivity_threshold: int = 30) -> List[int]:
-        """Get threads that have been inactive for a given threshold."""
-        threshold_time = datetime.now() - timedelta(minutes=inactivity_threshold)
-        inactive_threads: List[int] = []
-
-        threads = self.store._session.query(Thread).filter(Thread.session_id == session_id).all()
-        for thread in threads:
-            recent_message = (
-                self.store._session.query(SessionMessage)
-                .filter(SessionMessage.thread_id == thread.id)
-                .filter(SessionMessage.created_at > threshold_time)
-                .first()
+    def get_inactive_threads(self, session_id: Union[str, int], inactivity_threshold: int = 30) -> List[str]:
+        chat_id = self._chat_scope(session_id)
+        threshold_time = datetime.utcnow() - timedelta(minutes=inactivity_threshold)
+        rows = (
+            self._session.query(Thread.public_id)
+            .filter(
+                Thread.chat_id == chat_id,
+                Thread.last_active_at.isnot(None),
+                Thread.last_active_at < threshold_time,
             )
-            if not recent_message:
-                inactive_threads.append(thread.id)
+            .all()
+        )
+        return [row[0] for row in rows]
 
-        return inactive_threads
-
-    def cleanup_inactive_threads(self, session_id: int, inactivity_threshold: int = 30) -> int:
-        """Cleanup inactive threads."""
-        inactive_threads = self.get_inactive_threads(session_id, inactivity_threshold)
-        for thread_id in inactive_threads:
-            self.close_thread(session_id, thread_id)
-        return len(inactive_threads)
+    def cleanup_inactive_threads(self, session_id: Union[str, int], inactivity_threshold: int = 30) -> int:
+        inactive = self.get_inactive_threads(session_id, inactivity_threshold)
+        for thread_ref in inactive:
+            self.close_thread(session_id, thread_ref)
+        return len(inactive)
 
 
 _thread_state: Optional[ThreadState] = None
 
 
 def get_thread_state() -> ThreadState:
-    """Get or create the global thread state instance."""
     global _thread_state
     if _thread_state is None:
         _thread_state = ThreadState()
@@ -236,6 +220,5 @@ def get_thread_state() -> ThreadState:
 
 
 def set_thread_state(state: ThreadState) -> None:
-    """Set the global thread state instance (for testing or DI)."""
     global _thread_state
     _thread_state = state

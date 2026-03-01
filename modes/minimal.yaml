@@ -1,0 +1,14 @@
+name: minimal
+version: "1.5.0"
+description: Minimal concise mode
+overlay_prompt: |
+  Keep output compact and direct. Avoid unnecessary structure.
+tool_bias:
+  prefer: []
+  avoid: []
+  max_tool_turns: 4
+output_shape:
+  must_include_sections: []
+  forbid_sections: ["Plan", "Tasks", "Acceptance Criteria"]
+risk_posture: balanced
+formatting_bias: terse

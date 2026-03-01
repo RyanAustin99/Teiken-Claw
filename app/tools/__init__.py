@@ -116,12 +116,12 @@ def register_production_tools(registry: ToolRegistry) -> None:
     registry.register(FilesTool(
         policy=files_policy,
         workspace_dir=getattr(settings, 'WORKSPACE_DIR', './data/workspace'),
-        max_file_size=getattr(settings, 'FILES_MAX_SIZE', 10_000_000),
+        max_file_size=getattr(settings, 'FILES_MAX_READ_BYTES', getattr(settings, 'FILES_MAX_SIZE', 10_000_000)),
     ))
-    registry.register(FilesWriteSubtool(policy=files_policy, max_file_size=getattr(settings, 'FILES_MAX_SIZE', 10_000_000)))
-    registry.register(FilesReadSubtool(policy=files_policy, max_file_size=getattr(settings, 'FILES_MAX_SIZE', 10_000_000)))
-    registry.register(FilesListSubtool(policy=files_policy, max_file_size=getattr(settings, 'FILES_MAX_SIZE', 10_000_000)))
-    registry.register(FilesExistsSubtool(policy=files_policy, max_file_size=getattr(settings, 'FILES_MAX_SIZE', 10_000_000)))
+    registry.register(FilesWriteSubtool(policy=files_policy, max_file_size=getattr(settings, 'FILES_MAX_WRITE_BYTES', getattr(settings, 'FILES_MAX_SIZE', 10_000_000))))
+    registry.register(FilesReadSubtool(policy=files_policy, max_file_size=getattr(settings, 'FILES_MAX_READ_BYTES', getattr(settings, 'FILES_MAX_SIZE', 10_000_000))))
+    registry.register(FilesListSubtool(policy=files_policy, max_file_size=getattr(settings, 'FILES_MAX_READ_BYTES', getattr(settings, 'FILES_MAX_SIZE', 10_000_000))))
+    registry.register(FilesExistsSubtool(policy=files_policy, max_file_size=getattr(settings, 'FILES_MAX_READ_BYTES', getattr(settings, 'FILES_MAX_SIZE', 10_000_000))))
     
     # Exec tool (admin only by default)
     exec_policy = ToolPolicy(

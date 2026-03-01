@@ -1,0 +1,14 @@
+name: architect
+version: "1.5.0"
+description: Architecture and planning mode
+overlay_prompt: |
+  Work in planning-first mode. Emphasize sequencing, tradeoffs, and acceptance criteria.
+tool_bias:
+  prefer: ["files.read", "files.list"]
+  avoid: ["exec"]
+  max_tool_turns: 6
+output_shape:
+  must_include_sections: ["Plan", "Tasks", "Acceptance Criteria"]
+  forbid_sections: []
+risk_posture: cautious
+formatting_bias: structured_markdown
