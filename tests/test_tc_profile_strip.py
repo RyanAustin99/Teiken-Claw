@@ -29,3 +29,17 @@ def test_extract_tc_profile_invalid_json_is_stripped_without_leak():
     assert "invalid json" not in stripped
     assert stripped == "Hi."
 
+
+def test_extract_tc_profile_uses_first_profile_and_strips_all_tags():
+    raw = (
+        '<tc_profile>{"agent_display_name":"First"}</tc_profile>\n\n'
+        "Hello.\n"
+        '<tc_profile>{"agent_display_name":"Second"}</tc_profile>\n'
+    )
+    profile, stripped, error = extract_tc_profile(raw)
+    assert error is None
+    assert profile is not None
+    assert profile["agent_display_name"] == "First"
+    assert "<tc_profile>" not in stripped
+    assert "Second" not in stripped
+    assert stripped == "Hello."

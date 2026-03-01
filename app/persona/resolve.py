@@ -26,8 +26,12 @@ MODE_ALIASES: Dict[str, str] = {
     "creative": "research",
 }
 
+TOOL_NAME_ALIASES: Dict[str, str] = {
+    "web.search": "web",
+}
+
 PLATFORM_PROFILE_TOOL_ALLOWLIST: Dict[str, Set[str]] = {
-    "safe": {"echo", "time", "status", "files.read", "files.list", "files.exists", "web.search"},
+    "safe": {"echo", "time", "status", "files.read", "files.list", "files.exists", "web"},
     "balanced": {
         "echo",
         "time",
@@ -36,7 +40,7 @@ PLATFORM_PROFILE_TOOL_ALLOWLIST: Dict[str, Set[str]] = {
         "files.list",
         "files.exists",
         "files.write",
-        "web.search",
+        "web",
         "exec",
     },
     "dangerous": set(),
@@ -104,23 +108,35 @@ def _build_effective_allowed_tools(
     if platform_allowed is None:
         platform_allowed = PLATFORM_PROFILE_TOOL_ALLOWLIST["safe"]
 
+    canonical_soul_allowed = {
+        _canonical_tool_name(item.strip())
+        for item in soul_allowed_tools
+        if item and item.strip()
+    }
+    canonical_mode_avoid = {
+        _canonical_tool_name(item.strip())
+        for item in mode_avoid_tools
+        if item and item.strip()
+    }
+
     if normalized_profile == "dangerous":
-        if "*" in set(soul_allowed_tools):
+        if "*" in canonical_soul_allowed:
             return None
-        allowed = {item.strip() for item in soul_allowed_tools if item and item.strip()}
+        allowed = set(canonical_soul_allowed)
     else:
-        if "*" in set(soul_allowed_tools):
+        if "*" in canonical_soul_allowed:
             allowed = set(platform_allowed)
         else:
-            soul_allowed = {item.strip() for item in soul_allowed_tools if item and item.strip()}
-            allowed = set(platform_allowed) & soul_allowed
+            allowed = set(platform_allowed) & canonical_soul_allowed
 
-    for tool in mode_avoid_tools:
-        item = (tool or "").strip()
-        if item:
-            allowed.discard(item)
+    for tool in canonical_mode_avoid:
+        allowed.discard(tool)
 
     return allowed
+
+
+def _canonical_tool_name(tool_name: str) -> str:
+    return TOOL_NAME_ALIASES.get(tool_name, tool_name)
 
 
 def build_effective_file_policy(base_policy: Dict[str, Any], *overrides: Optional[Dict[str, Any]]) -> Dict[str, Any]:

@@ -24,7 +24,7 @@ from app.tools.registry import ToolRegistry
 logger = logging.getLogger(__name__)
 
 DEFAULT_PROFILE_ALLOWLIST: Dict[str, set[str]] = {
-    "safe": {"echo", "time", "status", "files.read", "files.list", "files.exists", "web.search"},
+    "safe": {"echo", "time", "status", "files.read", "files.list", "files.exists", "web"},
     "balanced": {
         "echo",
         "time",
@@ -33,9 +33,13 @@ DEFAULT_PROFILE_ALLOWLIST: Dict[str, set[str]] = {
         "files.list",
         "files.exists",
         "files.write",
-        "web.search",
+        "web",
         "exec",
     },
+}
+
+TOOL_NAME_ALIASES: Dict[str, str] = {
+    "web.search": "web",
 }
 
 
@@ -103,12 +107,14 @@ class ToolExecutor:
             )
             results.append(envelope)
 
-        for call in capped_calls:
+        for incoming_call in capped_calls:
+            call = self._normalize_call(incoming_call)
             self._emit_audit(
                 "tool_call_detected",
                 call.tool,
                 {
                     "call_id": call.id,
+                    "requested_tool": incoming_call.tool,
                     "agent_id": ctx.agent_id,
                     "session_id": ctx.session_id,
                     "thread_id": ctx.thread_id,
@@ -135,6 +141,7 @@ class ToolExecutor:
                         "call_id": call.id,
                         "reason": denied_reason,
                         "tool_profile": ctx.tool_profile,
+                        "requested_tool": incoming_call.tool,
                         "correlation_id": correlation_id,
                     },
                     ctx,
@@ -302,6 +309,19 @@ class ToolExecutor:
             return True
         allowed = DEFAULT_PROFILE_ALLOWLIST.get(normalized, DEFAULT_PROFILE_ALLOWLIST["safe"])
         return tool_name in allowed
+
+    @staticmethod
+    def _canonical_tool_name(tool_name: str) -> str:
+        candidate = (tool_name or "").strip()
+        if not candidate:
+            return candidate
+        return TOOL_NAME_ALIASES.get(candidate, candidate)
+
+    def _normalize_call(self, call: ToolCall) -> ToolCall:
+        canonical_tool = self._canonical_tool_name(call.tool)
+        if canonical_tool == call.tool:
+            return call
+        return ToolCall(id=call.id, tool=canonical_tool, args=call.args)
 
     @staticmethod
     def _sanitize_result_payload(result: ToolResult, *, max_chars: int) -> Dict[str, Any]:

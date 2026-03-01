@@ -133,3 +133,68 @@ async def test_agent_runtime_denies_disallowed_tool_profile(tmp_path):
     assert result.ok is True
     assert not (tmp_path / "hello.md").exists()
     assert any(item.get("tool") == "files.write" and item.get("ok") is False for item in result.tool_results)
+
+
+@pytest.mark.asyncio
+async def test_agent_runtime_boot_rewrites_once_when_lint_fails():
+    ollama = AsyncMock()
+    ollama.chat.side_effect = [
+        ChatResponse(
+            model="llama3.2",
+            message=ChatMessage(
+                role="assistant",
+                content=(
+                    '<tc_profile>{"agent_display_name":"Forge","agent_voice":["calm"],'
+                    '"agent_principles":["Be useful"]}</tc_profile>\n\n'
+                    "In this scenario, how can I assist you today?"
+                ),
+            ),
+            done=True,
+        ),
+        ChatResponse(
+            model="llama3.2",
+            message=ChatMessage(role="assistant", content="Hey, what should I call you, and what would you like to call me?"),
+            done=True,
+        ),
+    ]
+    runtime = AgentRuntime(ollama_client=ollama, tool_registry=ToolRegistry(), context_builder=MagicMock())
+    job = Job(
+        source=JobSource.SCHEDULER,
+        type=JobType.SYSTEM_EVENT,
+        priority=JobPriority.SCHEDULED,
+        chat_id="scheduler",
+        payload={"event_subtype": "HATCH_BOOT"},
+    )
+    result = await runtime.run(job)
+    assert result.ok is True
+    assert "what should i call you" in result.response.lower()
+    assert result.metadata.get("tc_profile_parsed") is True
+
+
+@pytest.mark.asyncio
+async def test_agent_runtime_boot_uses_fallback_after_failed_rewrite():
+    ollama = AsyncMock()
+    ollama.chat.side_effect = [
+        ChatResponse(
+            model="llama3.2",
+            message=ChatMessage(role="assistant", content="In this scenario:\n1) First\n2) Second"),
+            done=True,
+        ),
+        ChatResponse(
+            model="llama3.2",
+            message=ChatMessage(role="assistant", content="session scenario pretend roleplay"),
+            done=True,
+        ),
+    ]
+    runtime = AgentRuntime(ollama_client=ollama, tool_registry=ToolRegistry(), context_builder=MagicMock())
+    job = Job(
+        source=JobSource.SCHEDULER,
+        type=JobType.SYSTEM_EVENT,
+        priority=JobPriority.SCHEDULED,
+        chat_id="scheduler",
+        payload={"event_subtype": "HATCH_BOOT"},
+    )
+    result = await runtime.run(job)
+    assert result.ok is True
+    assert result.response == "Hey, what should I call you, and what would you like to call me?"
+    assert result.metadata.get("boot_fallback_used") is True

@@ -24,13 +24,12 @@ def extract_tc_profile(raw_text: str) -> Tuple[Optional[Dict[str, Any]], str, Op
         return None, raw_text, None
 
     profile_text = (match.group(1) or "").strip()
-    stripped = (raw_text[: match.start()] + raw_text[match.end() :]).lstrip("\r\n ").rstrip()
+    stripped = _TC_PROFILE_PATTERN.sub("", raw_text).lstrip("\r\n ").rstrip()
     try:
         payload = json.loads(profile_text)
         if not isinstance(payload, dict):
             return None, stripped, "tc_profile JSON is not an object"
         return payload, stripped, None
-    except Exception as exc:
+    except Exception:
         # Never leak the raw profile envelope in user-visible content.
-        return None, stripped, f"tc_profile parse failed: {exc}"
-
+        return None, stripped, "tc_profile parse failed"

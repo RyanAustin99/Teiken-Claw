@@ -31,3 +31,10 @@ def test_boot_linter_canned_assistant_intro():
 def test_boot_linter_operational_identity_phrase():
     problems = lint_boot_message("My operational identity is Alex.", settings)
     assert any("forbidden phrase" in item and "operational identity" in item for item in problems)
+
+
+def test_boot_linter_session_scenario_meta_phrases():
+    problems = lint_boot_message("For this session in this scenario, let's begin.", settings)
+    lowered = " ".join(problems).lower()
+    assert "session" in lowered
+    assert "scenario" in lowered

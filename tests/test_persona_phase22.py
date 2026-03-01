@@ -33,6 +33,7 @@ def _write_seed_soul(path):
                 - files.read
                 - files.write
                 - status
+                - web.search
             """
         ).strip(),
         encoding="utf-8",
@@ -150,6 +151,22 @@ def test_alias_resolution_to_canonical_mode_ref(isolated_persona_registries):
     )
     assert persona.resolved_mode_ref == "builder@1.5.0"
     assert persona.resolved_soul_ref == "teiken_claw_agent@1.5.0"
+
+
+def test_persona_canonicalizes_legacy_web_search_tool_name(isolated_persona_registries):
+    persona = resolve_persona(
+        mode_ref="builder",
+        soul_ref="teiken_claw_agent",
+        tool_profile="safe",
+        base_file_policy={
+            "max_read_bytes": 1048576,
+            "max_write_bytes": 262144,
+            "allowed_extensions": [".md", ".txt", ".json"],
+        },
+    )
+    assert persona.effective_allowed_tools is not None
+    assert "web" in persona.effective_allowed_tools
+    assert "web.search" not in persona.effective_allowed_tools
 
 
 def test_prompt_assembler_is_deterministic():

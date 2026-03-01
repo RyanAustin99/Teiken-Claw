@@ -1,4 +1,5 @@
 import asyncio
+import json
 from pathlib import Path
 
 from app.control_plane.bootstrap import build_context
@@ -60,8 +61,12 @@ def test_onboarding_reply_extraction_transitions_agent_active(tmp_path):
     assert "automate my workflow" in (done_agent.agent_profile_purpose or "").lower()
 
     memories = get_memory_store().list_memories(scope=f"agent:{agent.id}", limit=100)
-    prefs = [m for m in memories if getattr(m, "key", None) == "user_prefs"]
-    assert prefs, "expected USER_PREFS memory record"
+    prefs_user = [m for m in memories if getattr(m, "key", None) == "user_preferred_name"]
+    prefs_agent = [m for m in memories if getattr(m, "key", None) == "agent_name_preference"]
+    prefs_purpose = [m for m in memories if getattr(m, "key", None) == "agent_purpose"]
+    assert prefs_user, "expected USER_PREFS user_preferred_name record"
+    assert prefs_agent, "expected USER_PREFS agent_name_preference record"
+    assert prefs_purpose, "expected USER_PREFS agent_purpose record"
 
 
 def test_conversation_rewrites_third_person_self_reference(tmp_path):
@@ -103,6 +108,54 @@ def test_onboarding_extractor_captures_profanity_preference():
     )
     assert extracted["profanity_level"] == "allowed"
     assert extracted["tone_preference"] == "casual"
+
+
+def test_llm_onboarding_fallback_rejects_low_confidence_fields(tmp_path):
+    context = build_context(cli_data_dir=str(tmp_path / "cp_data"))
+    agent = context.agent_service.create_agent(name="low-confidence-agent")
+    session = context.session_service.new_session(agent.id, title="chat")
+    context.agent_service.update_agent(
+        agent.id,
+        {
+            "is_fresh": True,
+            "onboarding_state": AgentOnboardingState.WAITING_USER_PREFS,
+            "profile_json": {"agent_display_name": "Assistant"},
+        },
+    )
+    context.session_service.append_assistant_message(session.id, "What should I call you?")
+
+    outputs = iter(
+        [
+            json.dumps(
+                {
+                    "user_preferred_name": "Ryan",
+                    "agent_name_preference": None,
+                    "agent_purpose": None,
+                    "tone_preference": None,
+                    "profanity_level": None,
+                    "confidence": {
+                        "user_preferred_name": 0.3,
+                        "agent_name_preference": 0.0,
+                        "agent_purpose": 0.0,
+                        "tone_preference": 0.0,
+                        "profanity_level": 0.0,
+                    },
+                }
+            ),
+            "Acknowledged.",
+        ]
+    )
+
+    async def _fake_chat_messages(messages, model=None, tools=None, options=None):
+        return next(outputs)
+
+    context.model_service.chat_messages = _fake_chat_messages
+    _run(context.conversation_service.generate_response(agent.id, session.id, "yeah sure"))
+
+    after = context.agent_service.get_agent(agent.id)
+    assert after is not None
+    assert after.is_fresh is True
+    assert after.onboarding_state == AgentOnboardingState.WAITING_USER_PREFS
 
 
 def test_conversation_uses_system_prompt_after_onboarding(tmp_path):

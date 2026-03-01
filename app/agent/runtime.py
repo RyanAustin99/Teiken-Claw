@@ -44,6 +44,7 @@ from app.tools.loop import run_tool_loop
 from app.tools.registry import ToolRegistry, get_tool_registry
 
 from app.memory.thread_state import get_thread_state
+from app.memory.store import get_memory_store
 from app.memory.message_store import MessageStore
 from app.memory.extractor import get_memory_extractor
 from app.persona.resolve import PersonaResolutionError, ResolvedPersona, resolve_persona
@@ -53,12 +54,15 @@ logger = get_logger(__name__)
 FRESH_BOOT_SYSTEM_BLOCK = (
     "You are speaking directly to the user. Speak in first person (I/me). "
     "Never use meta AI phrasing. Keep the first message natural, short, and conversational. "
-    "No lists or headings. Ask at most two short questions."
+    "No lists or headings. Ask at most two short questions. "
+    "Do not use the words session, scenario, pretend, roleplay, or operational identity."
 )
 
 OUTPUT_FORMAT_BLOCK = (
     "Output must start with <tc_profile>{JSON}</tc_profile>, then a blank line, then visible message."
 )
+
+BOOT_FALLBACK_MESSAGE = "Hey, what should I call you, and what would you like to call me?"
 
 
 # Constants
@@ -162,6 +166,7 @@ class AgentRuntime:
         self.tool_executor = ToolExecutor(self.tool_registry)
         self._message_store = MessageStore()
         self._memory_extractor = get_memory_extractor()
+        self._legacy_memory_store = get_memory_store()
         
         logger.info(
             f"AgentRuntime initialized: max_tool_turns={max_tool_turns}",
@@ -297,7 +302,7 @@ class AgentRuntime:
                 metadata={"error_type": type(e).__name__},
             )
 
-        final_content = loop_result.final_response or ""
+        final_content = self._sanitize_final_response(loop_result.final_response or "")
         tool_events = loop_result.tool_events
         tool_call_count = len([item for item in tool_events if item.tool != "invalid"])
 
@@ -352,20 +357,86 @@ class AgentRuntime:
             {"role": "system", "content": OUTPUT_FORMAT_BLOCK},
             {"role": "user", "content": "You've just been hatched. Send your first message now."},
         ]
+        logger.info(
+            "Boot started",
+            extra={"event": "boot_started", "job_id": job.job_id, "event_subtype": subtype},
+        )
         try:
-            response = await self._call_ollama_with_retry(messages=messages, tools=None)
+            response = await self._call_ollama_with_retry(
+                messages=messages,
+                tools=None,
+                options=self._boot_generation_options(),
+            )
             raw = response.message.content or ""
-            _, visible, _ = extract_tc_profile(raw)
+            profile_payload, visible, parse_error = extract_tc_profile(raw)
             visible = visible.strip() or raw.strip()
+            if profile_payload:
+                logger.info(
+                    "tc_profile parsed",
+                    extra={
+                        "event": "tc_profile_parsed",
+                        "job_id": job.job_id,
+                        "keys": sorted(profile_payload.keys()),
+                    },
+                )
+            elif parse_error:
+                logger.warning(
+                    "tc_profile parse failed",
+                    extra={"event": "tc_profile_parse_failed", "job_id": job.job_id, "error": parse_error},
+                )
             problems = lint_boot_message(visible, settings)
             if problems:
-                return AgentResult(
-                    ok=False,
-                    error="Boot message lint failed",
-                    error_code="BOOT_LINT_FAILED",
-                    metadata={"problems": problems},
+                logger.warning(
+                    "Boot lint failed",
+                    extra={"event": "boot_lint_failed", "job_id": job.job_id, "problems": problems},
                 )
-            return AgentResult(ok=True, response=visible, metadata={"event_subtype": subtype})
+                logger.info(
+                    "Boot rewrite attempted",
+                    extra={"event": "boot_rewrite_attempted", "job_id": job.job_id},
+                )
+                rewritten_raw = await self._rewrite_boot_message(visible)
+                _, rewritten_visible, _ = extract_tc_profile(rewritten_raw or "")
+                rewritten_visible = (rewritten_visible or rewritten_raw or "").strip()
+                rewritten_problems = lint_boot_message(rewritten_visible, settings)
+                if not rewritten_problems and rewritten_visible:
+                    visible = rewritten_visible
+                    problems = []
+                else:
+                    visible = BOOT_FALLBACK_MESSAGE
+                    problems = rewritten_problems
+
+            visible = self._sanitize_final_response(visible)
+            metadata: Dict[str, Any] = {
+                "event_subtype": subtype,
+                "degraded_reason": None if not problems else "; ".join(problems) or "boot_rewrite_failed",
+                "tc_profile_parsed": bool(profile_payload),
+                "tc_profile_error": parse_error,
+            }
+            if problems:
+                metadata["boot_fallback_used"] = True
+
+            agent_id = (job.payload or {}).get("agent_id")
+            if agent_id and profile_payload:
+                try:
+                    self._persist_boot_identity_memory(agent_id=str(agent_id), profile=profile_payload)
+                except Exception as exc:
+                    logger.warning(
+                        "Boot identity persistence failed",
+                        extra={"event": "boot_identity_persist_failed", "job_id": job.job_id, "error": str(exc)},
+                    )
+                    metadata["degraded_reason"] = f"boot_identity_persist_failed:{exc}"
+
+            logger.info(
+                "Boot completed",
+                extra={
+                    "event": "boot_completed",
+                    "job_id": job.job_id,
+                    "word_count": len([w for w in visible.split() if w]),
+                    "question_count": visible.count("?"),
+                    "fallback_used": bool(metadata.get("boot_fallback_used")),
+                },
+            )
+            return AgentResult(ok=True, response=visible, metadata=metadata)
         except Exception as exc:
             return AgentResult(
                 ok=False,
@@ -486,6 +557,7 @@ class AgentRuntime:
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]] = None,
+        options: Optional[Dict[str, Any]] = None,
     ) -> ChatResponse:
         """
         Call Ollama with retry logic for transient errors.
@@ -507,6 +579,7 @@ class AgentRuntime:
                 response = await self.ollama_client.chat(
                     messages=messages,
                     tools=tools,
+                    options=options,
                 )
                 return response
                 
@@ -966,6 +1039,67 @@ class AgentRuntime:
                 extra={"event": "memory_extraction_failed", "thread_id": thread_id}
             )
 
+    async def _rewrite_boot_message(self, previous_visible: str) -> str:
+        prompt = (
+            "Rewrite this opening message naturally as a single short paragraph. "
+            "Use first person (I/me). "
+            "Do not use list formatting, headings, or meta/policy phrasing. "
+            f"Maximum {int(getattr(settings, 'TC_BOOT_MAX_WORDS', 140) or 140)} words and "
+            f"{int(getattr(settings, 'TC_BOOT_MAX_QUESTIONS', 2) or 2)} question marks."
+        )
+        response = await self._call_ollama_with_retry(
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": previous_visible or ""},
+            ],
+            tools=None,
+            options=self._boot_generation_options(),
+        )
+        return response.message.content or ""
+
+    @staticmethod
+    def _boot_generation_options() -> Dict[str, Any]:
+        return {
+            "temperature": float(getattr(settings, "TC_BOOT_TEMPERATURE", 0.7) or 0.7),
+            "top_p": float(getattr(settings, "TC_BOOT_TOP_P", 0.9) or 0.9),
+        }
+
+    def _persist_boot_identity_memory(self, *, agent_id: str, profile: Dict[str, Any]) -> None:
+        scope = f"agent:{agent_id}"
+        display_name = str(profile.get("agent_display_name") or "").strip()
+        if display_name:
+            self._legacy_memory_store.create_memory(
+                memory_type="semantic",
+                content=display_name,
+                scope=scope,
+                source="BOOT",
+                key="agent_display_name",
+                confidence=1.0,
+                metadata={"scope": "AGENT_SELF"},
+            )
+        voice = profile.get("agent_voice")
+        if isinstance(voice, list) and voice:
+            self._legacy_memory_store.create_memory(
+                memory_type="semantic",
+                content=json.dumps(voice, ensure_ascii=False),
+                scope=scope,
+                source="BOOT",
+                key="agent_voice",
+                confidence=1.0,
+                metadata={"scope": "AGENT_SELF"},
+            )
+        principles = profile.get("agent_principles")
+        if isinstance(principles, list) and principles:
+            self._legacy_memory_store.create_memory(
+                memory_type="semantic",
+                content=json.dumps(principles, ensure_ascii=False),
+                scope=scope,
+                source="BOOT",
+                key="agent_principles",
+                confidence=1.0,
+                metadata={"scope": "AGENT_SELF"},
+            )
+
     def _resolve_job_persona(self, job: Job) -> ResolvedPersona:
         payload = job.payload or {}
         mode_ref = payload.get("mode")
@@ -994,6 +1128,13 @@ class AgentRuntime:
                 tool_profile=str(payload.get("tool_profile", "balanced")),
                 base_file_policy=file_policy,
             )
+
+    @staticmethod
+    def _sanitize_final_response(content: str) -> str:
+        text = (content or "").strip()
+        if not text:
+            return text
+        return text.replace("this agent", "I").replace("This agent", "I")
 
 
 # Global runtime instance

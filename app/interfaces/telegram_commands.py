@@ -1678,7 +1678,7 @@ class CommandRouter:
                 agent = cp.agent_service.create_agent(
                     name=agent_name,
                     description=f"Telegram hatched agent for chat {chat_id}",
-                    tool_profile="safe",
+                    tool_profile="balanced",
                     allow_dangerous_override=False,
                     prompt_template_version=cp.config_service.load().values.agent_prompt_template_version,
                 )

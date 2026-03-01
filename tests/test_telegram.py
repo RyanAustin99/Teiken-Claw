@@ -368,6 +368,30 @@ class TestCommandRouter:
         assert "unavailable" in rename.lower()
         assert "unavailable" in onboard.lower()
 
+    @pytest.mark.asyncio
+    async def test_hatch_defaults_to_balanced_tool_profile(self):
+        class _Agent:
+            def __init__(self, name: str):
+                self.id = "agent-1"
+                self.name = name
+
+        cp = MagicMock()
+        cp.agent_service.get_agent.return_value = None
+        cp.agent_service.create_agent.return_value = _Agent("tg-agent-12345")
+        cp.runtime_supervisor.start_agent = AsyncMock(return_value=None)
+        cp.runtime_supervisor.trigger_hatch_boot = AsyncMock(return_value="Hi there")
+        cp.session_service.new_session.return_value = type("Session", (), {"id": "session-1"})()
+        cp.config_service.load.return_value = type(
+            "CfgWrap",
+            (),
+            {"values": type("Cfg", (), {"agent_prompt_template_version": "1.0.0"})()},
+        )()
+
+        router = CommandRouter(admin_chat_ids=[12345], control_plane_context=cp)
+        response = await router.handle_hatch(12345, 111, [])
+        assert "Hatched" in response
+        assert cp.agent_service.create_agent.call_args.kwargs["tool_profile"] == "balanced"
+
 
 # =============================================================================
 # TelegramSender Tests

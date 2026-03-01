@@ -35,6 +35,30 @@ class SleepTool(Tool):
         return ToolResult.success("ok")
 
 
+class FakeWebTool(Tool):
+    @property
+    def name(self) -> str:
+        return "web"
+
+    @property
+    def description(self) -> str:
+        return "fake web"
+
+    @property
+    def json_schema(self):
+        return {
+            "type": "function",
+            "function": {
+                "name": "web",
+                "description": "fake web",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        }
+
+    async def execute(self, **kwargs):
+        return ToolResult.success("web-ok")
+
+
 @pytest.mark.asyncio
 async def test_executor_allows_safe_echo():
     registry = ToolRegistry()
@@ -102,3 +126,15 @@ async def test_executor_propagates_structured_tool_error(tmp_path):
     assert results[0].error["type"] == "err_path_traversal"
     assert results[0].error["code"] == "ERR_PATH_TRAVERSAL"
     assert results[0].error["legacy_code"] == "PATH_SECURITY_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_executor_accepts_legacy_web_search_alias_for_safe_profile():
+    registry = ToolRegistry()
+    registry.register(FakeWebTool())
+    executor = ToolExecutor(registry)
+    ctx = ToolExecutionContext(tool_profile="safe")
+    call = ToolCall(id="tc_1", tool="web.search", args={})
+    results = await executor.execute_calls([call], ctx=ctx)
+    assert results[0].ok is True
+    assert results[0].tool == "web"

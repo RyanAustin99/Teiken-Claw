@@ -24,6 +24,7 @@ logger = get_logger(__name__)
 FRESH_BOOT_SYSTEM_BLOCK = """
 You are speaking directly to the user. Speak in first person ("I/me").
 Never say: "this agent", "as an AI", "language model", "system prompt", or anything meta about prompts/instructions.
+Never use words like "session", "scenario", "pretend", or "roleplay".
 Never claim an "operational identity", legal identity, or real-world persona.
 Never invent or assign yourself a name.
 If asked about your name, say you don't have a set name yet and ask what they want to call you.
@@ -53,6 +54,8 @@ JSON must be valid and match:
 }
 After </tc_profile>, output a blank line and then the user-visible message only.
 """.strip()
+
+BOOT_FALLBACK_MESSAGE = "Hey, what should I call you, and what would you like to call me?"
 
 
 class HatchBootService:
@@ -87,7 +90,7 @@ class HatchBootService:
 
         logger.info(
             "Boot generation started",
-            extra={"event": "boot_generation_started", "agent_id": agent.id, "session_id": session.id},
+            extra={"event": "boot_started", "agent_id": agent.id, "session_id": session.id},
         )
 
         profile_payload: Optional[Dict[str, Any]] = None
@@ -107,7 +110,7 @@ class HatchBootService:
                 logger.warning(
                     "Boot profile parse failed",
                     extra={
-                        "event": "boot_profile_parse_failed",
+                        "event": "tc_profile_parse_failed",
                         "agent_id": agent.id,
                         "attempt": attempt,
                         "error": parse_error,
@@ -118,7 +121,7 @@ class HatchBootService:
                 logger.info(
                     "Boot profile parsed",
                     extra={
-                        "event": "boot_profile_parsed",
+                        "event": "tc_profile_parsed",
                         "agent_id": agent.id,
                         "keys": sorted(parsed_profile.keys()),
                     },
@@ -143,8 +146,13 @@ class HatchBootService:
             elif not overwrite_profile and isinstance(agent.profile_json, dict):
                 profile_payload = dict(agent.profile_json)
             else:
-                self._mark_degraded(agent.id, reason=last_error or "boot profile missing")
-                raise ValidationError("Boot profile generation failed", details={"agent_id": agent.id, "error": last_error})
+                profile_payload = self._fallback_profile(agent=agent)
+                logger.warning(
+                    "Boot profile missing, using synthesized fallback",
+                    extra={"event": "boot_profile_missing_fallback", "agent_id": agent.id},
+                )
+                if not visible_message:
+                    visible_message = BOOT_FALLBACK_MESSAGE
         profile_payload = self._normalize_profile_payload(profile_payload, agent=agent)
 
         lint_problems = lint_boot_message(visible_message, settings)
@@ -157,7 +165,7 @@ class HatchBootService:
             if retry_budget > 0:
                 logger.info(
                     "Boot rewrite attempt",
-                    extra={"event": "boot_rewrite_attempt", "agent_id": agent.id, "attempt": 1},
+                    extra={"event": "boot_rewrite_attempted", "agent_id": agent.id, "attempt": 1},
                 )
                 rewritten = await self._rewrite_boot_message(agent_id=agent.id, model=agent.model, previous=visible_message)
                 rewritten = self._sanitize_boot_message(rewritten.strip())
@@ -175,7 +183,7 @@ class HatchBootService:
         if lint_problems or not visible_message:
             reason = "; ".join(lint_problems) if lint_problems else "empty boot message"
             self._mark_degraded(agent.id, reason=reason)
-            raise ValidationError("Boot message failed lint", details={"agent_id": agent.id, "problems": lint_problems})
+            visible_message = BOOT_FALLBACK_MESSAGE
 
         persisted_profile = profile_payload if overwrite_profile or not agent.profile_json else dict(agent.profile_json)
         if overwrite_profile or not agent.profile_json:
@@ -214,31 +222,46 @@ class HatchBootService:
         return visible_message
 
     def _persist_boot_identity(self, *, agent_id: str, profile: Dict[str, Any], directives: str) -> None:
-        identity = {
-            "agent_display_name": profile.get("agent_display_name"),
-            "agent_voice": profile.get("agent_voice") or [],
-            "agent_principles": profile.get("agent_principles") or [],
-        }
+        scope = f"agent:{agent_id}"
+        display_name = str(profile.get("agent_display_name") or "").strip()
+        if display_name:
+            self.memory_store.create_memory(
+                memory_type="semantic",
+                content=display_name,
+                scope=scope,
+                source="BOOT",
+                key="agent_display_name",
+                confidence=1.0,
+                metadata={"scope": "AGENT_SELF"},
+            )
+        voice = profile.get("agent_voice") or []
+        if isinstance(voice, list) and voice:
+            self.memory_store.create_memory(
+                memory_type="semantic",
+                content=json.dumps(voice, ensure_ascii=False),
+                scope=scope,
+                source="BOOT",
+                key="agent_voice",
+                confidence=1.0,
+                metadata={"scope": "AGENT_SELF"},
+            )
+        principles = profile.get("agent_principles") or []
+        if isinstance(principles, list) and principles:
+            self.memory_store.create_memory(
+                memory_type="semantic",
+                content=json.dumps(principles, ensure_ascii=False),
+                scope=scope,
+                source="BOOT",
+                key="agent_principles",
+                confidence=1.0,
+                metadata={"scope": "AGENT_SELF"},
+            )
         self.memory_store.create_memory(
             memory_type="semantic",
-            content=json.dumps(identity, ensure_ascii=False),
-            scope=f"agent:{agent_id}",
+            content=directives,
+            scope=scope,
             source="BOOT",
-            key="identity",
-            confidence=1.0,
-            metadata={"scope": "AGENT_SELF"},
-        )
-        principles_payload = {
-            "directives": directives,
-            "principles": profile.get("agent_principles") or [],
-            "voice": profile.get("agent_voice") or [],
-        }
-        self.memory_store.create_memory(
-            memory_type="semantic",
-            content=json.dumps(principles_payload, ensure_ascii=False),
-            scope=f"agent:{agent_id}",
-            source="BOOT",
-            key="boot_principles",
+            key="agent_boot_directives",
             confidence=1.0,
             metadata={"scope": "AGENT_SELF"},
         )

@@ -14,7 +14,10 @@ from app.agent.prompt_assembler import PromptAssembler
 from app.control_plane.domain.errors import ValidationError
 from app.control_plane.domain.models import AgentOnboardingState, AgentRecord, OnboardingStatus
 from app.interfaces.tc_profile_strip import extract_tc_profile
-from app.memory.onboarding_extractor import extract_onboarding_prefs, parse_llm_onboarding_json
+from app.memory.onboarding_extractor import (
+    extract_onboarding_prefs,
+    parse_llm_onboarding_json_with_confidence,
+)
 from app.memory.store import get_memory_store
 from app.control_plane.services.agent_prompt_template_service import AgentPromptTemplateService
 from app.control_plane.services.agent_service import AgentService
@@ -52,8 +55,8 @@ TOOL_PROFILE_CAPABILITIES: Dict[str, List[str]] = {
 
 
 TOOL_PROFILE_DEFAULT_TOOLS: Dict[str, List[str]] = {
-    "safe": ["echo", "time", "status", "files.read", "files.list", "files.exists", "web.search"],
-    "balanced": ["echo", "time", "status", "files.read", "files.list", "files.exists", "files.write", "web.search", "exec"],
+    "safe": ["echo", "time", "status", "files.read", "files.list", "files.exists", "web"],
+    "balanced": ["echo", "time", "status", "files.read", "files.list", "files.exists", "files.write", "web", "exec"],
     "dangerous": ["all-registered-tools"],
 }
 
@@ -65,6 +68,8 @@ RESPONSE_META_BANLIST = [
     "keep it respectful",
     "keep it clean and professional",
 ]
+
+LLM_ONBOARDING_CONFIDENCE_THRESHOLD = 0.8
 
 ONBOARDING_PENDING_BLOCK = (
     "Onboarding is still in progress. "
@@ -265,20 +270,33 @@ class AgentConversationService:
         logger.info(
             "Onboarding preferences extracted",
             extra={
-                "event": "onboarding_prefs_extracted",
+                "event": "onboarding_extracted",
                 "agent_id": agent.id,
                 "fields": sorted([key for key, value in extracted.items() if value]),
             },
         )
 
         try:
+            for key, value in extracted.items():
+                if not value:
+                    continue
+                self.memory_store.create_memory(
+                    memory_type="semantic",
+                    content=value,
+                    scope=f"agent:{agent.id}",
+                    source=source,
+                    key=key,
+                    confidence=0.9 if source == "USER" else 0.8,
+                    metadata={"scope": "USER_PREFS", "session_id": session.id},
+                )
+            # Backward-compatible aggregate card.
             self.memory_store.create_memory(
                 memory_type="semantic",
                 content=json.dumps(extracted, ensure_ascii=False),
                 scope=f"agent:{agent.id}",
                 source=source,
                 key="user_prefs",
-                confidence=0.85,
+                confidence=0.8,
                 metadata={"scope": "USER_PREFS", "session_id": session.id},
             )
         except Exception:
@@ -335,7 +353,8 @@ class AgentConversationService:
     ) -> Dict[str, Optional[str]]:
         prompt = (
             "Extract onboarding preferences from the user message. "
-            "Return JSON only with keys: user_preferred_name, agent_name_preference, agent_purpose, tone_preference, profanity_level. "
+            "Return JSON only with keys: user_preferred_name, agent_name_preference, agent_purpose, tone_preference, profanity_level, confidence. "
+            "confidence must be an object with the same keys and 0..1 numeric scores. "
             "profanity_level must be one of: none, light, allowed, or null. "
             "Use null when uncertain."
         )
@@ -353,8 +372,15 @@ class AgentConversationService:
                 ],
                 model=model,
             )
-            parsed = parse_llm_onboarding_json(raw)
-            return parsed
+            parsed, confidences = parse_llm_onboarding_json_with_confidence(raw)
+            gated: Dict[str, Optional[str]] = {}
+            for key, value in parsed.items():
+                if not value:
+                    gated[key] = None
+                    continue
+                score = float(confidences.get(key, 0.0))
+                gated[key] = value if score >= LLM_ONBOARDING_CONFIDENCE_THRESHOLD else None
+            return gated
         except Exception:
             return {
                 "user_preferred_name": None,
