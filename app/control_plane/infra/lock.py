@@ -90,6 +90,32 @@ def _pid_process_name(pid: int) -> Optional[str]:
         return None
 
 
+def _pid_commandline(pid: int) -> Optional[str]:
+    """Return command line for PID when available."""
+    if pid <= 0:
+        return None
+    try:
+        if os.name == "nt":
+            proc = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", f"(Get-CimInstance Win32_Process -Filter \"ProcessId={pid}\").CommandLine"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            value = (proc.stdout or "").strip()
+            return value.lower() if value else None
+        proc = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "args="],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        value = (proc.stdout or "").strip()
+        return value.lower() if value else None
+    except Exception:
+        return None
+
+
 @dataclass
 class LockInfo:
     pid: int
@@ -127,6 +153,8 @@ class SingleInstanceLock:
     def is_stale(self, lock_info: Optional[LockInfo]) -> bool:
         if lock_info is None:
             return False
+        if lock_info.pid == os.getpid():
+            return False
         if not _pid_exists(lock_info.pid):
             return True
 
@@ -135,11 +163,23 @@ class SingleInstanceLock:
             return True
 
         if lock_info.process_name:
-            return current_process != lock_info.process_name
+            if current_process != lock_info.process_name:
+                return True
+            cmdline = _pid_commandline(lock_info.pid)
+            # If we can read command line and it doesn't look like Teiken,
+            # treat the lock as stale (PID reuse / unrelated process).
+            if cmdline and ("teiken" not in cmdline and "app.control_plane.entrypoint" not in cmdline):
+                return True
+            return False
 
         # Legacy lock format fallback: allow only known launch executables.
         allowed = {"python.exe", "python", "teiken-claw.exe", "teiken.exe"}
-        return current_process not in allowed
+        if current_process not in allowed:
+            return True
+        cmdline = _pid_commandline(lock_info.pid)
+        if cmdline and ("teiken" not in cmdline and "app.control_plane.entrypoint" not in cmdline):
+            return True
+        return False
 
     def acquire(self, force_unlock: bool = False) -> None:
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
