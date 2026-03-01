@@ -7,6 +7,7 @@ import io
 import json
 import os
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -49,11 +50,52 @@ def _pid_exists(pid: int) -> bool:
         return False
 
 
+def _pid_process_name(pid: int) -> Optional[str]:
+    """Return the executable name for a running PID, or None if not found."""
+    if pid <= 0:
+        return None
+    try:
+        if os.name == "nt":
+            proc = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            output = (proc.stdout or "").strip()
+            if not output or output.upper().startswith("INFO:"):
+                return None
+            reader = csv.reader(io.StringIO(output))
+            for row in reader:
+                if not row:
+                    continue
+                if row[0].strip().upper().startswith("INFO:"):
+                    return None
+                if len(row) >= 2:
+                    try:
+                        if int(row[1].strip()) == pid:
+                            return row[0].strip().lower()
+                    except ValueError:
+                        continue
+            return None
+        proc = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "comm="],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        name = (proc.stdout or "").strip()
+        return name.lower() if name else None
+    except Exception:
+        return None
+
+
 @dataclass
 class LockInfo:
     pid: int
     started_at: float
     host: str
+    process_name: Optional[str] = None
 
 
 class SingleInstanceLock:
@@ -73,6 +115,11 @@ class SingleInstanceLock:
                 pid=int(payload.get("pid", 0)),
                 started_at=float(payload.get("started_at", 0.0)),
                 host=str(payload.get("host", "unknown")),
+                process_name=(
+                    str(payload.get("process_name")).strip().lower()
+                    if payload.get("process_name")
+                    else None
+                ),
             )
         except Exception:
             return None
@@ -80,10 +127,19 @@ class SingleInstanceLock:
     def is_stale(self, lock_info: Optional[LockInfo]) -> bool:
         if lock_info is None:
             return False
-        if _pid_exists(lock_info.pid):
-            return False
-        # If PID is gone, treat lock as stale immediately.
-        return True
+        if not _pid_exists(lock_info.pid):
+            return True
+
+        current_process = _pid_process_name(lock_info.pid)
+        if not current_process:
+            return True
+
+        if lock_info.process_name:
+            return current_process != lock_info.process_name
+
+        # Legacy lock format fallback: allow only known launch executables.
+        allowed = {"python.exe", "python", "teiken-claw.exe", "teiken.exe"}
+        return current_process not in allowed
 
     def acquire(self, force_unlock: bool = False) -> None:
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -102,6 +158,7 @@ class SingleInstanceLock:
             "pid": os.getpid(),
             "started_at": time.time(),
             "host": os.getenv("COMPUTERNAME", "unknown"),
+            "process_name": (_pid_process_name(os.getpid()) or Path(sys.executable).name).strip().lower(),
         }
         self.lock_path.write_text(json.dumps(payload), encoding="utf-8")
         self._acquired = True

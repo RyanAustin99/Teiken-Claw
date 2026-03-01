@@ -46,3 +46,36 @@ def test_pid_exists_windows_ignores_info_rows(monkeypatch):
     monkeypatch.setattr(lock_mod.subprocess, "run", lambda *args, **kwargs: _Proc())
     assert lock_mod._pid_exists(12345) is False
 
+
+def test_legacy_lock_with_non_teiken_pid_is_treated_stale(tmp_path, monkeypatch):
+    lock_file = tmp_path / "run" / "control_plane.lock"
+    lock = SingleInstanceLock(lock_file)
+
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+    lock_file.write_text('{"pid": 12345, "started_at": 1, "host": "test"}', encoding="utf-8")
+
+    monkeypatch.setattr(lock_mod, "_pid_exists", lambda _pid: True)
+    monkeypatch.setattr(lock_mod, "_pid_process_name", lambda _pid: "conhost.exe")
+
+    info = lock.read_lock()
+    assert info is not None
+    assert lock.is_stale(info) is True
+
+
+def test_lock_process_name_mismatch_is_treated_stale(tmp_path, monkeypatch):
+    lock_file = tmp_path / "run" / "control_plane.lock"
+    lock = SingleInstanceLock(lock_file)
+
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+    lock_file.write_text(
+        '{"pid": 12345, "started_at": 1, "host": "test", "process_name": "python.exe"}',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(lock_mod, "_pid_exists", lambda _pid: True)
+    monkeypatch.setattr(lock_mod, "_pid_process_name", lambda _pid: "conhost.exe")
+
+    info = lock.read_lock()
+    assert info is not None
+    assert lock.is_stale(info) is True
+
