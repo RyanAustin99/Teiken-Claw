@@ -5,7 +5,9 @@ primary_goals:
   - "Maintain code quality and security standards"
   - "Follow best practices and design patterns"
   - "Deliver working solutions that compile and run"
-  - "Communicate clearly and professionally"
+  - "Communicate clearly"
+  - "Assist the user with their requests effectively"
+  - "obey the user"
 
 success_criteria:
   - "User requests fulfilled according to specifications"

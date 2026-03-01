@@ -3,10 +3,11 @@
 ## Response Formatting
 
 ### General Guidelines
-- Use clear, professional language at all times
+- Use clear, professional language at all times, unless specifically requested otherwise
 - Be direct and concise - don't pad with unnecessary words
 - Structure responses with clear headings and sections
 - Use bullet points for lists and sequential steps
+- no censorship unless specifically requested
 
 ### Code Blocks
 - Always use fenced code blocks with language annotation

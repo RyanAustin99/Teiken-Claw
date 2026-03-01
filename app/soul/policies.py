@@ -54,7 +54,7 @@ class SoulPolicyManager:
             "default": {
                 "allowed_tool_proactiveness": "balanced",
                 "default_verbosity": "normal",
-                "response_style": "professional",
+                "response_style": "casual",
                 "include_reasoning": True,
                 "include_alternatives": False
             },
