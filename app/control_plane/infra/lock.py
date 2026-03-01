@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import os
 import subprocess
@@ -19,12 +21,28 @@ def _pid_exists(pid: int) -> bool:
     try:
         if os.name == "nt":
             proc = subprocess.run(
-                ["tasklist", "/FI", f"PID eq {pid}"],
+                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
                 capture_output=True,
                 text=True,
                 check=False,
             )
-            return str(pid) in proc.stdout
+            output = (proc.stdout or "").strip()
+            if not output:
+                return False
+            if output.upper().startswith("INFO:"):
+                return False
+            reader = csv.reader(io.StringIO(output))
+            for row in reader:
+                if not row:
+                    continue
+                if row[0].strip().upper().startswith("INFO:"):
+                    return False
+                if len(row) >= 2:
+                    try:
+                        return int(row[1].strip()) == pid
+                    except ValueError:
+                        continue
+            return False
         os.kill(pid, 0)
         return True
     except Exception:
@@ -64,8 +82,8 @@ class SingleInstanceLock:
             return False
         if _pid_exists(lock_info.pid):
             return False
-        age = time.time() - lock_info.started_at
-        return age >= 0 or age > self.stale_after_sec
+        # If PID is gone, treat lock as stale immediately.
+        return True
 
     def acquire(self, force_unlock: bool = False) -> None:
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
